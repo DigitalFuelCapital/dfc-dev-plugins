@@ -57,9 +57,9 @@ Either way, `~/.claude/settings.json` needs a `refreshInterval`:
 }
 ```
 
-**Do not skip `refreshInterval`.** Without it the status line only re-runs when the main
-session renders a message. During a long `/dev-autofix:run` wave the lead is waiting on
-workers, the snapshot ages past `maxSnapshotAgeSeconds`, and the run stops itself.
+`refreshInterval` lets the writer regularly persist available input. It does not fetch
+new rate limits: replaying an idle session only advances `ts`. A long worker wave can
+still leave the lead's readings stale; a new API observation is needed to renew them.
 
 ## Verifying it works
 
@@ -67,12 +67,14 @@ workers, the snapshot ages past `maxSnapshotAgeSeconds`, and the run stops itsel
 cat ~/.claude/usage/latest.json
 ```
 
-You want a recent `observed_at` and non-null `pct5` / `pct7`:
+You want recent `observed5` and `observed7`, non-null `pct5` / `pct7`, and future resets:
 
 ```json
 {
   "ts": 1790174041,
   "observed_at": 1790174030,
+  "observed5": 1790174030,
+  "observed7": 1790174030,
   "session_id": "...",
   "model": "claude-opus-5-5",
   "pct5": 24,
@@ -91,17 +93,22 @@ The snapshot is merged across every open session, not overwritten. Each session'
 line keeps re-running with the rate limits from its own last API response, so an idle
 session would otherwise replay old, lower usage over newer numbers. Within a window usage
 only rises, so the writer keeps the highest reading per window and ignores readings from
-an older window. `observed_at` moves only when a session reports a new API response that
-is not behind the stored numbers; `ts` is just the last write. The skills judge freshness
-by `observed_at`. Per-session state lives in `sessions.json` next to the snapshot.
+an older window. `observed5` and `observed7` move independently when a new API observation
+supplies an accepted reading for that window. A five-hour-only update cannot refresh
+weekly freshness. `observed_at` is their minimum, or null until both have been observed;
+`ts` is just the last write. Skills gate each available window using its own timestamp.
+Per-session state lives in `sessions.json` next to the snapshot. Legacy snapshots without
+per-window timestamps require new observations; their old aggregate timestamp is not
+used to invent freshness.
 
-To test without touching your real snapshot:
+To test without touching your real snapshot, run from the repository root:
 
 ```bash
-T=$(mktemp -d)
-echo '{"session_id":"t","rate_limits":{"five_hour":{"used_percentage":23.5,"resets_at":1790182000},"seven_day":{"used_percentage":61.2,"resets_at":1790300000}}}' \
-  | HOME=$T node statusline/usage-snapshot.mjs && cat $T/.claude/usage/latest.json
+node --test plugins/dev-autofix/tests/budget.test.mjs
 ```
+
+Tests inject an isolated snapshot directory and clock into the writer. Production CLI
+use still reads stdin, writes under the real home directory, and produces no output.
 
 ## When there is no budget to show
 

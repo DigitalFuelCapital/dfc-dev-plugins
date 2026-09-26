@@ -49,7 +49,9 @@ Decide each field:
 - **`verify`** - the scripts that must pass before a PR opens. Prefer `lint`, `typecheck`,
   `test`, `build` when present. Exclude anything that starts a server, opens a browser,
   needs a database, or takes more than a couple of minutes. If a `test` script runs an
-  e2e suite rather than unit tests, leave it out and say why.
+  e2e suite rather than unit tests, leave it out and say why. Every repo must have at
+  least one nonempty verification command. If none can be established, ask for the
+  appropriate check; do not write an executable config with verification omitted.
 - **`prepare`** - codegen the repo needs in a fresh worktree before typecheck passes
   (generated types, schema clients). Detect by checking whether a gitignored generated
   file is referenced by `tsconfig.json` or imported by source.
@@ -98,7 +100,9 @@ directory.
    `/dev-autofix:run` stops itself.
 4. **Verify.** The snapshot only appears after the status line next refreshes, which
    needs an API response in this session. Read `~/.claude/usage/latest.json`:
-   - **Fresh** (`observed_at` within the last 15 minutes): report the current 5h and weekly numbers.
+   - **Fresh** (`observed5` and `observed7` each within the last 15 minutes, and their
+     reset times still in the future): report the current 5h and weekly numbers. Partial
+     or legacy snapshots need a new API observation for each unobserved/stale window.
    - **Missing:** say the wiring is in place and the file appears after the next
      refresh; `/dev-autofix:run` re-checks it.
    - **Present but no `pct5`/`pct7`:** the plan does not expose rate limits (API-key and
@@ -109,14 +113,16 @@ directory.
 
 Write `autofix.config.json` against the schema at `schema/autofix.config.schema.json`
 in this plugin. Only include keys that differ from their defaults, plus `version` and
-`repos`.
+`repos`. Run the config check in [shared workflow state](../../references/workflow-state.md)
+after writing it; do not report setup complete if required verification is missing.
 
 Leave `worktreeRoot` at its default (`~/.claude/autofix/worktrees`) unless the user asks
 otherwise, and refuse any value inside a repo checkout: a nested worktree is picked up by
 that checkout's typecheck, lint and test globs.
 
-Then create the queue file at `queuePath` with the `# Autofix queue` heading and an empty
-`## Inbox` section, so `/dev-autofix:plan` has somewhere to write.
+If the queue file at `queuePath` is missing, create it with the `# Autofix queue` heading
+and an empty `## Inbox` section. Preserve an existing queue when adding repos or
+refreshing machine setup.
 
 ## 5. Report
 

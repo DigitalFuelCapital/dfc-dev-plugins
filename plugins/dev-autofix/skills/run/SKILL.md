@@ -1,6 +1,6 @@
 ---
 name: run
-description: Spend leftover subscription budget on small, safe code fixes landed as signed draft PRs. Reads the budget snapshot written by the status line, consumes pre-planned entries from the autofix queue, works in throwaway worktrees, gates every push through a diff and malware check, opens one PR per fix, and stops at a reserve. Invoke manually when the status line shows unused weekly budget.
+description: Spend leftover subscription budget on small, safe code fixes landed as signed draft PRs. Reads the budget snapshot written by the status line, consumes pre-planned entries from the autofix queue, works in reusable worktrees, gates every push through a diff and malware check, opens one PR per fix, and stops at a reserve. Invoke manually when the status line shows unused weekly budget.
 disable-model-invocation: true
 argument-hint: "[repo ...] [reserve=10] [max=5] [model=sonnet] [dry-run]"
 ---
@@ -31,6 +31,11 @@ Resolve `autofix.config.json` from the current directory or any ancestor, else
 missing. Apply argument overrides on top. Resolve `queuePath` relative to the directory
 holding the config; expand `~` in `worktreeRoot` and `usageSnapshotPath`.
 
+Read [shared workflow state](../../references/workflow-state.md) and run its config
+check. Require nonempty verification commands; acquire the run lock before recovery or
+publication and each repo lock before worktree use. Release owned locks in a finally
+step after workers stop. A busy repo is skipped, never reset.
+
 Stop if `worktreeRoot` resolves to a path inside any `repo.path`. A worktree nested in a
 checkout gets picked up by that checkout's typecheck, lint and test globs.
 
@@ -38,12 +43,12 @@ checkout gets picked up by that checkout's typecheck, lint and test globs.
 
 The snapshot writer merges every session's status line refresh into one snapshot. Usage
 only rises within a window, so the merged `pct5`/`pct7` never drop because an idle session
-replayed an old reading. `observed_at` is when a session last reported a new API response;
-`ts` is only when the file was last written, and an idle session rewrites it constantly -
-**never judge freshness by `ts`**.
+replayed an old reading. `observed5` and `observed7` are the observation times for their respective windows.
+`observed_at` is their conservative minimum, or null until both have been observed.
+`ts` is only the last write; **never judge freshness by `ts`**.
 
 ```bash
-jq -r '"5h \(.pct5)% (resets \(.reset5|todate)) | wk \(.pct7)% (resets \(.reset7|todate)) | observed \(now - .observed_at | floor)s ago"' ~/.claude/usage/latest.json
+jq '{pct5, reset5, observed5, pct7, reset7, observed7}' <usageSnapshotPath>
 ```
 
 First check the writer itself: if `~/.claude/usage-snapshot.mjs` is missing, or its
@@ -62,10 +67,11 @@ Without `max=N`, stop and explain both paths.
 
 Otherwise stop immediately, and say which condition tripped, if:
 
-- `observed_at` is null or older than `maxSnapshotAgeSeconds` - the numbers are not
-  current. Ask the user to let the status line refresh (and check `refreshInterval` is
-  set, see `statusline/README.md`) rather than acting on old data. **A stale snapshot is
-  the one failure mode that can silently overspend.**
+- For each available window, its `observed5` or `observed7` is null, in the future, or
+  older than `maxSnapshotAgeSeconds`. Do not substitute `observed_at` for missing
+  per-window fields in an old snapshot. A new API observation is needed; refreshing
+  an idle status line only changes `ts`. A partial update cannot renew the other window.
+  These checks also apply to the available windows in bounded `max=N` mode.
 - `reset5` or `reset7` is in the past - that window has reset since the last observation,
   so its number is meaningless. Treat as stale.
 - `pct7 >= 100 - reserve`
@@ -93,24 +99,37 @@ reserve. When the budget is unavailable (above), `waveSize` is just
 
 ## 3. Prepare worktrees
 
-Never touch the user's checkout. Each repo gets one single-occupancy worktree at
-`<worktreeRoot>/<repo.name>`:
+Never touch the user's checkout. Hold the repo lock and run the shared worktree check
+before creating or switching `<worktreeRoot>/<repo.name>`. Follow the shared
+[preparation and recovery procedure](../../references/workflow-state.md#worktree-preparation-and-recovery)
+for stale registrations and known failed work. Quarantine a failed attempt once its
+workers stop, then continue on a fresh managed tree; unknown changes block local work.
+Never reset or clean to make a worktree reusable.
 
 ```bash
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
 git -C <repo.path> fetch origin <repo.baseBranch> --quiet
-git -C <repo.path> worktree prune
-[ -e <worktreeRoot>/<repo.name>/.git ] || git -C <repo.path> worktree add --detach <worktreeRoot>/<repo.name> origin/<repo.baseBranch>
+# If missing but registered: inspect prune candidates using the shared procedure.
+# Only after confirming all candidates are abandoned:
+git -C <repo.path> worktree prune --dry-run --verbose --expire now
+git -C <repo.path> worktree prune --verbose --expire now
+# Rerun the guard after pruning; add ONLY when exists: false and registered: false.
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
+git -C <repo.path> worktree add --detach <worktreeRoot>/<repo.name> origin/<repo.baseBranch>
+# After creation, or directly here for an existing clean worktree:
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
 git -C <worktreeRoot>/<repo.name> checkout --detach origin/<repo.baseBranch> --quiet
-git -C <worktreeRoot>/<repo.name> reset --hard --quiet
-git -C <worktreeRoot>/<repo.name> clean -fdq
 ```
 
-`git clean` without `-x` leaves gitignored files alone, so `node_modules` and generated
-types survive a reset.
+These are conditional steps, not an unconditional shell block. Stop dependent commands
+on any failure. Recheck before every later checkout. Ignored generated files remain in
+place; tracked and untracked modifications are never discarded.
 
 Run `repo.install` when `node_modules` is missing, or when `repo.lockfile` changed since
-the last run - compare `shasum -a 256 <lockfile>` against
-`<worktreeRoot>/<repo.name>.lock.sha` and write the new hash after a successful install.
+the last run. Follow the shared [dependency cache format](../../references/workflow-state.md#dependency-cache-format):
+compare only the digest from `shasum -a 256 <lockfile> | awk '{print $1}'` with the first
+field of `<worktreeRoot>/<repo.name>.lock.sha`. After a successful install, write only
+that digest and a newline, never the filename.
 Run each `repo.prepare` command once per fresh worktree.
 
 ## 4. Fix loop
@@ -120,7 +139,7 @@ scope, run up to `waveSize` of their workers in parallel as a wave. Delegate eac
 one `general-purpose` subagent on `workerModel`, and keep the lead's own context small -
 the lead reads reports and the gate's output, not diffs.
 
-Between waves: gate and push (step 5), reset the worktree (step 3), re-read the budget
+Between waves: gate and push (step 5), safely switch the clean worktree (step 3), re-read the budget
 (step 2), record queue outcomes, and stop when the count reaches `max` or a stop condition
 trips.
 
@@ -139,9 +158,12 @@ git -C <repo.path> merge-base --is-ancestor <oid> origin/<repo.baseBranch>
 
 Then, for every `pushed (<branch>, ...)` entry, look for its PR with
 `gh pr list -R <repo.remote> --head <branch> --state all --json number`. If one exists,
-set `pr-open (PR #n, ...)`; otherwise retry the `gh pr create` below with that recorded
-branch and `<worktreeRoot>/pr/<slug>.md`, and set `pr-open` on success. A PR opened by
-that retry was created by this run, so record it in the run manifest (step 5).
+verify its repository/head/base, register it in this run's manifest with the shared
+`record-pr` helper (lead only, serial calls under the run lock), then set
+`pr-open (PR #n, ...)`. Otherwise retry `gh pr create` with
+that branch and `<worktreeRoot>/pr/<slug>.md`; register a confirmed PR before setting
+`pr-open`. Both discovered and newly created PRs belong to this pass. Registration
+failure leaves the entry `pushed` and stops publication until it is recovered.
 
 **The queue.** Before briefing a worker, take the first entry in `queuePath` for its repo
 with `status: ready`, whose `kind:` is not `security`, and whose `after:` is `none` or
@@ -188,7 +210,8 @@ search tiers):
 > bare `git stash`. {config.forbidden} {repo.forbidden}
 >
 > Scope: diff under {maxDiffLines} lines (a queue entry may state its own size), one
-> concern, behaviour-preserving. If it grows past that, revert and pick something smaller.
+> concern, behaviour-preserving. If it grows past that, stop and report the scope
+> problem. Preserve unfinished changes; never reset or clean the shared worktree.
 >
 > Branch `git checkout -b {repo.branchPrefix}-{yyyymmdd}-<slug>`. Run every command in
 > {verify}{, and `{testCommand}` for the tests covering the files you touched}. Every one
@@ -207,11 +230,17 @@ search tiers):
 > below it. Title imperative, under 70 characters. Do not put the word "draft" in the
 > title or body - some review bots skip anything that looks like a draft. Body: what was
 > wrong, how you found it, what changed, how you verified, and any follow-ups. One commit
-> series, one concern. Leave the worktree on the new branch; the lead resets it.
+> series, one concern. Leave the worktree on the new branch; the lead switches away only when it is clean and the commit is retained by a branch.
 >
 > Report back in under 10 lines: branch (or "no candidate", "plan did not hold: <why>",
 > "verify failed: <command>", "signing failed"), slug, files touched, which verification you ran, and up to 3
 > candidates you noticed but did not take.
+
+After a worker fails or stops for scope/verification, mark the queue entry blocked and
+save the failure context, HEAD and worker status. Once all its workers have stopped,
+quarantine unfinished work using the shared helper, report the recovery path, and
+prepare a fresh managed tree for the next eligible entry. Do not retry the same blocked
+entry automatically. Clean retained branches can stay local while the tree is reused.
 
 ## 5. Push gate (lead)
 
@@ -274,24 +303,24 @@ gh pr create -R <repo.remote> --draft --base <repo.baseBranch> --head <branch> \
 ```
 
 Record `pushed` before `gh pr create` so a PR failure can never make the entry look
-untouched and eligible for a second fix. If `gh pr create` fails, retry it once; if it
-still fails, leave the entry `pushed` and list it in the report. A `pushed` entry is
-never picked up as `ready`.
+untouched and eligible for a second fix. If `gh pr create` has an uncertain outcome,
+query the branch for an existing PR before retrying. Register a discovered PR exactly
+like a successful creation. If neither discovery nor one retry resolves it, leave
+`pushed` and report it. Never blindly retry publication or pick `pushed` as `ready`.
 
-**Run manifest.** `/dev-autofix:finish` acts on exactly the PRs the last run opened, so
-record each one in `<worktreeRoot>/last-run.json` as soon as `gh pr create` succeeds.
-The first PR this run opens replaces the file, and later ones append to it. A run that
-opens no PRs leaves the previous run's manifest in place, so review still has something
-to act on.
+**Run manifest.** `/dev-autofix:review` reviews and `/dev-autofix:finish` acts on exactly
+the PRs the last run registered, so record each newly created or recovered PR in
+`<worktreeRoot>/last-run.json` as soon as its identity is confirmed.
+The first PR registered this run, newly created or recovered, replaces the file; later
+registrations upsert into the same batch. A run with no registrations leaves the previous
+manifest in place, so review still has something to act on.
 
-```bash
-m=<worktreeRoot>/last-run.json
-# first PR of this run:
-jq -n --arg t "<run start, ISO 8601>" '{startedAt: $t, prs: []}' > $m
-# every PR, including the first:
-jq --arg r <repo.name> --argjson n <number> --arg b <branch> --arg u <url> \
-  '.prs += [{repo: $r, number: $n, branch: $b, url: $u}]' $m > $m.tmp && mv $m.tmp $m
-```
+Use the [shared PR registration helper](../../references/workflow-state.md#pr-registration-and-recovery)
+with the invocation's fixed `startedAt` and `runToken`. Write the entry file from the
+confirmed GitHub response; it contains `repo`, `number`, `branch`, and `url`. The helper
+atomically upserts it and deduplicates recovery retries. Register **before** the queue
+transition to `pr-open`; if this fails, retain `pushed` for the next recovery pass.
+Do not hand-edit or truncate the manifest.
 
 Never push to `baseBranch`, never force-push, never merge.
 
@@ -314,3 +343,6 @@ its local path.
 Finish with anything a worker flagged that a human needs to see: real bugs found but not
 taken, and anything that looked like a security issue. Those never become autofix PRs, so
 surfacing them here is the only way they reach the user.
+
+Include `state.mjs list-recovery <config-file>` output in the final report: preserved
+paths, reasons, allocated bytes per tree and total, including older recovery trees.

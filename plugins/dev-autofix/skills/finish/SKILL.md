@@ -1,23 +1,25 @@
 ---
 name: finish
-description: Act on your review of autofix PRs. For each PR with a new review comment from you, either has an Opus worker address the concerns and posts a follow-up comment saying what changed, or - when the comment is an explicit approve token such as LGTM - syncs the branch with the base, merges it, and cleans up. Invoke manually after reviewing.
+description: Act on reviews of autofix PRs. Address findings with an Opus worker, or merge an unchanged head with a commit-bound approval. Test clean base integration locally without changing the approved PR head. Preserve unfinished worktrees and clean up only verified completed work. Invoke manually after reviewing.
 disable-model-invocation: true
 argument-hint: "[repo ...] [pr=N ...] [dry-run]"
 ---
 
 # /dev-autofix:finish - act on your PR review
 
-`/dev-autofix:run` opens draft PRs and stops. You review each one and leave a comment.
+`/dev-autofix:run` opens draft PRs and stops. Review each one manually or use
+`/dev-autofix:review` (`$review` in Codex) to review the full batch and leave comments.
 This skill reads those comments and closes the loop:
 
 - **Concerns** - an Opus worker addresses them in the worktree `/dev-autofix:run` already
   made, the lead gates and pushes the result, then posts a follow-up comment listing what
   was done per concern.
   You review again and re-invoke.
-- **Approve token** (`LGTM`, `/merge`, ...) and nothing else - the lead brings the branch
-  up to date with the base, re-verifies, marks the PR ready, merges it, deletes its
-  branches, and marks the queue entry `merged`. A repo's worktrees are pruned only once
-  every PR the last `/dev-autofix:run` opened in that repo is merged.
+- **Approve token** (`LGTM`, `/merge`, ...) bound to the current head and nothing else -
+  the lead verifies its integration with the latest base locally, then merges the
+  approved PR head without pushing the local test merge. Continue through the batch as
+  earlier merges move the base. Conflict resolutions that change the PR need review.
+  After merging, mark the queue entry `merged` and perform checked cleanup.
 
 Arguments (any order, `=` or `-` as separator): repo names to limit scope, `pr=N` (repeat
 for several) to act on specific PRs instead of the last run's PRs, `dry-run` to classify
@@ -26,11 +28,12 @@ pending reviews and print them without changing anything.
 **Authorization.** Invoking this skill is the user's explicit authorization for exactly
 this, on PRs in configured repos only: signed commits (including merges of the base
 branch) and fast-forward pushes to a PR's head branch, PR comments, `gh pr ready`,
-merging a PR with `mergeMethod` **only** when its pending review is an approve token (step
-3), after a merge deleting its local and remote head branch, and, once none of the last
-`/dev-autofix:run`'s PRs remain open in the repo, removing that repo's worktrees under
-`worktreeRoot`.
-It never force-pushes, never pushes to `baseBranch`, never merges on anything but an
+merging a PR with `mergeMethod` **only** when its pending review approves the exact head
+(step 3), after a merge deleting that verified merged branch, and removing the clean
+shared worktree only after step 10's checks. It also covers private local verification refs
+and their checked cleanup, and moving known failed attempts intact to recovery paths.
+Older or interrupted worktrees are preserved.
+It never overwrites a remote branch, never pushes to `baseBranch`, never merges on anything but an
 approve token, and never touches the user's own checkouts.
 
 **Division of labour.** As in `/dev-autofix:run`: the worker edits, verifies and commits;
@@ -42,10 +45,16 @@ Resolve `autofix.config.json` and apply overrides exactly as `/dev-autofix:run` 
 Stop and tell the user to run `/dev-autofix:init` if it is missing. Resolve `reviewers`:
 if unset, it is the single login from `gh api user --jq .login`.
 
+Read [shared workflow state](../../references/workflow-state.md). Run its config check,
+acquire the repo lock before any worktree activity, and use its approval checker. Release
+owned locks in a finally step after workers stop. Never continue a dependent action when
+a helper fails. With `dry-run`, classify without acquiring locks or writing records.
+
 Print the budget line from `/dev-autofix:run` step 2. Review is human-initiated work, not
 leftover-budget work, so it does **not** gate on `reservePercent`. It does stop if
 `pct5 >= fiveHourCeiling`, and it says so if the snapshot is stale or unavailable but
-carries on.
+carries on. Assess freshness using `observed5`/`observed7` and future reset times;
+a stale five-hour reading must not be treated as a current ceiling breach.
 
 ## 2. Find PRs with a pending review
 
@@ -77,14 +86,18 @@ gh api repos/<repo.remote>/pulls/<n>/comments --paginate \
 ```
 
 Skip, with the reason in the report, any PR that is not `OPEN`, or whose `baseRefName` is
-not the repo's `baseBranch`.
+not the repo's `baseBranch`. Require a same-repository head and the manifest's recorded
+branch (or the configured autofix prefix for explicit PRs).
 
-Build one timeline from three sources: issue comments (`comments`), review bodies
+Fetch all discussion pages from `issues/<n>/comments`, `pulls/<n>/reviews`, and
+`pulls/<n>/comments` with `gh api --paginate`; retain author, URL, body, timestamps,
+state and formal review `commit_id`. Do not rely on potentially truncated embedded
+comment arrays. Build one timeline from three sources: issue comments (`comments`), review bodies
 (`reviews` with a non-empty `body`), and inline review comments (the API call). Keep only
 entries whose author is in `reviewers`. Comments from anyone else - bots, other people -
 are never acted on; the worker may see them only as context, labelled as such.
 
-**The follow-up marker.** Every comment this skill posts ends with
+**The follow-up marker.** Addressed or deliberately superseded entries are acknowledged with
 
 ```
 <!-- dev-autofix:review addressed=<comma-separated ids> -->
@@ -106,8 +119,18 @@ Deterministic; no judgement. The PR is **approve** only if all of these hold:
 - after trimming, its body is exactly one of `approveTokens` (case-insensitive), with
   nothing else in it
 
+A lone exact token is an approval **candidate**, not merge authorization yet. Run the
+[approval checker](../../references/workflow-state.md#approval-records) against fresh
+GitHub metadata and the immutable record, formal review commit, or complete server
+push history for a manual conversation comment. Require its returned `approvedHead` to
+equal the current PR head. If evidence proves a changed head, post `Re-review required`
+with the existing marker consuming that stale token. Missing or ambiguous evidence is
+`approval evidence unavailable`: leave the token pending and report in chat, without a
+marker. Do not sync or spawn a worker merely to resolve missing approval evidence.
+Continue to the next PR.
+
 Everything else is **address**. "LGTM, but rename X" is address. Two comments, `LGTM` and
-an inline nit, are address. When in doubt, the rule already answered: address.
+an inline nit, are address. With `dry-run`, report unbound/stale tokens without posting.
 
 With `dry-run`, print per PR: repo, number, classification, and the pending entries
 (author, time, path:line for inline, body). Then stop.
@@ -117,25 +140,35 @@ With `dry-run`, print per PR: repo, number, classification, and the pending entr
 Use the worktree `/dev-autofix:run` already created for the repo at
 `<worktreeRoot>/<repo.name>`. Its dependencies and generated files are already in place, so
 reusing it avoids a full reinstall per PR. Create it only if it is missing, with the same
-command `run` uses. Never create a second worktree for a repo that already has one.
+command `run` uses. Keep one active managed worktree per repo; preserved recovery trees
+are allowed.
 
-Do not run `/dev-autofix:finish` and `/dev-autofix:run` on the same repo at the same time.
-The worktree is single-occupancy. If `git -C $wt status --porcelain` shows changes, or a
-merge or rebase is in progress, that could be another session mid-fix: stop for that repo
-and ask, rather than resetting over it.
+Hold the repo lock and run the shared worktree check before creation and each checkout.
+Use the shared preparation/recovery procedure for stale registrations and known failed
+attempts. After workers stop, quarantine known failed work and create a fresh managed
+tree so the remaining PRs can proceed. Unknown dirty work, active owners, or uncertain
+identity block local actions. No reset, clean, forced checkout, or forced removal.
+Record recovery paths in the report. For a verified path only:
 
-Check out each PR's head detached. Two reasons: `run`'s worker may have left the
-worktree on that branch, and detaching frees the branch so it can be deleted after a
-merge.
+Use the helper's returned path as `wt` in the remaining commands.
 
 ```bash
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
 git -C <repo.path> fetch origin <baseBranch> <head> --quiet
-git -C <repo.path> worktree prune
-wt=<worktreeRoot>/<repo.name>
-[ -e $wt/.git ] || git -C <repo.path> worktree add --detach $wt origin/<head>
-git -C $wt checkout --detach origin/<head> --quiet
-git -C $wt reset --hard --quiet && git -C $wt clean -fdq
+# For a missing registered tree, first inspect all prune candidates as documented.
+# Only if every candidate is confirmed abandoned:
+git -C <repo.path> worktree prune --dry-run --verbose --expire now
+git -C <repo.path> worktree prune --verbose --expire now
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
+# Only if the helper returned exists: false and registered: false:
+git -C <repo.path> worktree add --detach <worktreeRoot>/<repo.name> <recorded head SHA>
+# rerun the helper after creation, or before reusing an existing tree:
+node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
+git -C <worktreeRoot>/<repo.name> checkout --detach <recorded head SHA> --quiet
 ```
+
+These are conditional steps. Stop dependent commands on failure; never run a later
+checkout after a failed guard.
 
 Check `git -C $wt rev-parse HEAD` equals the PR's `headRefOid`. If not, the fetch raced a
 push; re-fetch once, then skip the PR if they still differ.
@@ -147,8 +180,10 @@ because merging the base can change it. Install scripts stay off.
 
 ## 5. Sync with the base
 
-Both paths do this first, so the worker and the verification see the code that will
-actually land, and the merge has no conflicts.
+Use this step for the address path, or when step 9 finds a conflict that requires a
+published resolution. Approval with a clean local integration goes directly to step 9.
+Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
+and requires another review; a local verification merge never gets pushed.
 
 ```bash
 cd $wt
@@ -157,9 +192,10 @@ git merge-base --is-ancestor origin/<baseBranch> HEAD || git merge --no-edit -S 
 
 - **Already up to date or clean merge** - continue.
 - **Conflicts** - leave the merge in progress. The worker (step 6) resolves it; on the
-  approve path, spawn the worker with only the conflict section of the brief.
-- If the worker cannot resolve them, run `git merge --abort`, post a comment (step 8)
-  explaining which files conflict, and skip the PR. Leave the queue entry `pr-open`.
+  approval-conflict path, spawn the worker with only the conflict section of the brief.
+- If the worker cannot resolve them, stop it, preserve the failed attempt with the
+  shared quarantine procedure, and report which files need human resolution. Leave the
+  queue entry `pr-open` and continue to the next PR on a fresh managed tree.
 
 Signing follows the `/dev-autofix:run` rules: never `--no-gpg-sign`; if the agent socket
 is unreachable under a sandbox, retry that one command with the sandbox disabled.
@@ -178,7 +214,7 @@ order. Brief:
 > conflict: {files}. Resolve every conflict first, keeping both the PR's intent and the
 > base's changes. Do not take one side wholesale to make the conflict go away. Then
 > `git commit --no-edit -S` to conclude the merge. If a conflict needs a product
-> decision, run `git merge --abort` and report "conflict needs human: <files, why>".
+> decision, stop and preserve the merge state; report "conflict needs human: <files, why>".
 >
 > REVIEW: the reviewer's comments, verbatim, each with its id (and path:line for inline
 > comments): {pending review}. The original plan for context: {queue entry, if any}.
@@ -207,7 +243,7 @@ order. Brief:
 > report "signing failed".
 >
 > Do NOT push, comment on the PR, or change the PR's draft state. The lead does those.
-> Write {worktreeRoot}/review/{repo.name}-pr{n}.md with one line per comment, in the form
+> Write {worktreeRoot}/review/scratch/{repo.name}-pr{n}.md with one line per comment, in the form
 > `- <comment id> · <one-line gist of the comment> -> <what changed, with file:line | why
 > nothing changed>`, followed by a `needs human:` list (or `needs human: none`).
 >
@@ -215,7 +251,9 @@ order. Brief:
 > <command>" or "signing failed"; commits added; files touched; verification run.
 
 Any outcome other than `done` means nothing is pushed. Post a follow-up comment (step 8)
-saying what blocked it, so the user sees it on the PR, and skip to the next PR.
+saying what blocked it, so the user sees it on the PR. Once its workers stop, quarantine
+unfinished work using the shared helper, then continue to the next PR on a fresh managed
+tree. Report the recovery path; never commit failed leftovers merely to clear the tree.
 
 ## 7. Push gate (lead)
 
@@ -261,11 +299,12 @@ git status --porcelain                                     # must be empty
 4. **Signed.** Every new commit, merges included, passes `git verify-commit`.
 5. **Clean.** Nothing uncommitted or untracked.
 
-On failure: do not push. Post a follow-up comment naming the failed check. The worktree
-is shared and the next PR resets it, so save the refused result first with
-`git -C $wt branch -f autofix-review/pr<n>-refused HEAD`. List that local branch in the
-report, then move on. (A malware match stops the whole run instead, and leaves the
-worktree untouched.)
+On failure: do not push. Post a follow-up comment naming the failed check. Preserve
+commits under a new, uniquely named `autofix-review/pr<n>-refused-<unique-id>` branch;
+never force-update a ref. Once workers stop, quarantine any unfinished attempt with
+the shared helper and prepare a fresh managed tree for the next PR. Clean worktrees
+with retained commits can be reused directly. List recovery refs and paths in the
+report. A malware match stops the whole run and leaves the worktree untouched.
 
 On success: `git push origin HEAD:refs/heads/<head>`. A plain push is fast-forward only,
 so if someone pushed to the branch meanwhile it is rejected. Report that and skip the PR.
@@ -273,7 +312,7 @@ Never retry with force.
 
 ## 8. Follow-up comment
 
-Write the body to `<worktreeRoot>/review/<repo.name>-pr<n>.comment.md` and post it with
+Write the body to `<worktreeRoot>/review/scratch/<repo.name>-pr<n>.comment.md` and post it with
 `gh pr comment <n> -R <repo.remote> --body-file <file>`. Keep it short:
 
 ```
@@ -293,92 +332,103 @@ Needs you: <list, or "nothing">
 
 Blocked outcomes (conflict needs human, verify failed, gate refused, push rejected) use
 the same shape with a first line of `**Review not addressed** - <reason>` and no table.
-They carry the marker too, so the same comments are not retried on every invocation.
-Leave a new comment to trigger another attempt.
+On the address path they carry the marker, so the same findings are not retried on every
+invocation. Leave a new comment to trigger another attempt. On the approval path,
+transient CI, mergeability, or evidence failures leave the token pending: report in chat
+without posting a marker. Only a proven stale head or a published new head consumes it.
 
 Queue entries stay `pr-open` on the address path. Keep the worktree: the next PR in
 the repo checks out its own head in it (step 4). The PR's branch stays on the remote.
 
-## 9. Approve - sync, verify, merge
+## 9. Approve - run integration verification, then merge
 
-1. Sync (step 5). If there were conflicts, the worker resolves them (step 6, conflict
-   section only).
-2. Always run `verify` in the worktree, even when the sync produced no commit. The
-   step 4 head check only proves the worktree matches the PR, not that the PR passes;
-   the branch may carry commits no one verified (a human push, an older run). If it
-   fails, post a blocked comment and skip. Only after it passes, and only if the sync
-   produced a commit, run the push gate (step 7) and push.
-3. Wait for CI on the head being merged:
-   `gh pr checks <n> -R <repo.remote> --watch --fail-fast --interval 15`, run with the
-   Bash tool's maximum timeout. "no checks reported" right after a push can mean the
-   checks have not registered yet. Re-run once; if it is still empty, treat the repo as
-   having no CI. A failing or still-pending check is a blocked comment, not a merge.
-4. `gh pr ready <n> -R <repo.remote>` if it is still a draft.
-5. `gh pr view <n> -R <repo.remote> --json mergeable,headRefOid`. Require `MERGEABLE`, and
-   require `headRefOid` to equal the worktree's HEAD.
-6. Merge, pinned to the exact head that was verified, and without `--delete-branch` (it
-   fails for a branch checked out in a worktree):
+Use the [executable verification helper](../../references/workflow-state.md#verification-for-batch-merges)
+for each approved PR. Do not manually assemble a test merge or verification receipt.
+
+1. Run `merge.mjs verify <config-file> <repo.name> <repoToken> <approval-input>`.
+   It fetches the PR/base, builds the local integration, executes configured commands
+   and writes their results. Commands use `CI=1` and `repo.commandTimeoutSeconds`
+   (default 600 seconds); a timed-out command is killed and fails this attempt. Keep
+   the returned verification ID. On `conflict`, use steps 5-8 to
+   resolve, verify, gate and publish a signed resolution, then request review of the new
+   head. On other failures, report the returned error and preserve unfinished work;
+   leave approval pending and continue to the next PR.
+2. Mark the PR ready if still draft. Wait for required CI with
+   `gh pr checks <n> -R <repo.remote> --watch --fail-fast --interval 15`.
+   Ready events may trigger checks. Empty results do not prove CI is disabled: inspect
+   expected workflows/checks and allow a bounded registration retry. Do not bypass rules.
+3. Refresh complete review evidence and run
+   `merge.mjs check <config-file> <repo.name> <repoToken> <fresh-approval-input> <verification-id>`.
+   This reads the helper's stored execution evidence, fresh PR head and actual remote
+   base tip. It polls `UNKNOWN` mergeability for up to 30 seconds. A timeout keeps
+   approval pending; a changed head requires review. If only the base changed, release
+   the old successful attempt's ref and repeat verification/check, up to three
+   attempts per PR. Do not re-review the unchanged head simply because an earlier PR
+   in the batch merged.
+4. Immediately merge the returned approved head, without `--delete-branch`:
 
    ```bash
-   gh pr merge <n> -R <repo.remote> --<mergeMethod> --match-head-commit <verified sha>
+   gh pr merge <n> -R <repo.remote> --<mergeMethod> --match-head-commit <approvedHead>
    ```
 
-If any step fails, post a blocked comment naming the step, leave the queue entry
-`pr-open`, and do not merge. If the sync needed a conflict resolution, also post a
-follow-up comment after the merge describing the resolution, so the record of what landed
-is on the PR.
+The head flag does not pin the base; branch rules/merge queues govern concurrent base
+changes after the final check. A strict up-to-date rule can still require publishing a
+sync, which requires review. Never silently bypass it.
+
+A successful CLI exit can mean queued rather than merged. Confirm `MERGED` before
+queue/branch/worktree cleanup. If queued, keep the queue entry `pr-open`, report
+`merge queued`, and continue. Failed or queued attempts do not consume approval.
+Release successful local verification refs with `merge.mjs release` before shared-tree
+cleanup. The helper restores the PR head on successful verification, so switching to
+the next PR uses the normal worktree guard. Failed attempts keep their refs and files
+for inspection or quarantine. Never push a verification ref or synthetic commit.
 
 ## 10. Cleanup after merge
 
-**Per merged PR**, straight after `gh pr merge` succeeds. This frees the branch and
-deletes it, but removes no worktree yet:
+After a confirmed merge, mark that queue entry `merged (PR #n, yyyy-mm-dd)`. This
+unlocks dependent entries. Cleanup failure must not undo that bookkeeping.
+
+Delete only the merged PR's branch, and only when its current local/remote tip still
+equals the head actually merged. Preserve advanced branches and branches held by any
+other checkout. Under the repo lock, guard the shared worktree and detach it to the
+fetched base without force before deleting its branch. A squash merge may require
+`git branch -D <head>`, but only after those exact-tip and confirmed-merge checks.
+Delete the remote branch with an expected-old-SHA lease so a concurrent push is not
+lost; if the lease is rejected, leave it and report the new tip:
 
 ```bash
-# detach every worktree under worktreeRoot that has the branch checked out
-git -C <that worktree> checkout --detach origin/<baseBranch> --quiet
-git -C <repo.path> branch -D <head> 2>/dev/null   # left over from /dev-autofix:run, if any
-git -C <repo.path> push origin --delete <head>    # "remote ref does not exist" is fine
-rm -f <worktreeRoot>/review/<repo.name>-pr<n>.md <worktreeRoot>/review/<repo.name>-pr<n>.comment.md
+git -C <repo.path> push --force-with-lease=refs/heads/<head>:<merged-head-SHA> origin :refs/heads/<head>
 ```
 
-Find those worktrees with `git -C <repo.path> worktree list --porcelain`. Never touch a
-worktree outside `worktreeRoot`, which includes the user's own checkout. If one of those
-has the branch checked out, skip `branch -D` and report it: the branch cannot be deleted
-locally until the user switches off it.
+This lease is solely a compare-and-delete guard for the confirmed merged branch, never
+permission to overwrite a branch or use an unconditional force push.
 
-Set the queue entry to `merged (PR #n, yyyy-mm-dd)`. Any entry whose `after:` names it
-becomes eligible for the next `/dev-autofix:run`. This is safe because the entry is
-recorded as merged only after `gh pr merge` succeeded.
+For worktree cleanup, inspect all known autofix PRs for the repo: current manifest,
+queue `pr-open`/`pushed` entries, and open GitHub PRs matching the configured branch
+prefix, including older runs. Unknown publication state or any open autofix PR means
+keep the shared worktree. A closed-unmerged PR also needs its work retained unless its
+commits are demonstrably reachable from a retained branch and no unfinished files remain.
 
-**Per repo, only once all of the last run's PRs are merged.** After the last PR for a
-repo in this pass, check every manifest PR for that repo, including any skipped this
-pass because it is outside `pr=N`, with `gh pr view <n> -R <repo.remote> --json state`.
-If any is still `OPEN`, keep every worktree, because the next review round uses them, and
-say so in the report. This applies whether the open PRs were awaiting review, addressed,
-or blocked. PRs from earlier runs do not hold pruning back. If none are open, prune everything under `worktreeRoot` that belongs to the
-repo: the shared `<worktreeRoot>/<repo.name>` plus any stale leftovers, such as worktrees
-from interrupted runs or older ones under `<worktreeRoot>/review/`.
-
-```bash
-git -C <repo.path> worktree remove --force <each worktree under worktreeRoot>
-git -C <repo.path> worktree prune
-rm -f <worktreeRoot>/<repo.name>.lock.sha
-```
-
-The next `/dev-autofix:run` creates a fresh worktree and reinstalls. Keep any
-`autofix-review/pr<n>-refused` branches, since they hold refused work the user has not
-inspected yet.
+Only consider `<worktreeRoot>/<repo.name>` for automatic removal, never sweep the root
+or remove older/interrupted worktrees. Hold its lock, run the shared guard immediately
+before cleanup, and prove HEAD is on the fetched base or is the exact confirmed merged
+head. If either check fails, preserve it. Use `git worktree remove <verified-path>`
+**without `--force`**; if Git refuses, stop cleanup and report why. Remove the dependency
+hash file only after successful removal. Preserve review/approval records and recovery
+branches. Release ownership afterward; never remove another session's locks.
 
 ## 11. Report
 
 A table with columns PR (link), repo, and outcome: `addressed (n comments)`, `merged`,
-`awaiting review`, or `blocked (<reason>)`. Then:
+`merge queued`, `re-review required`, `awaiting review`, or `blocked (<reason>)`. Then:
 
 - every `needs human` item the worker raised, per PR
-- any `autofix-review/pr<n>-refused` branch the push gate refused, and any merged branch
+- any recovery branch the push gate refused, and any merged branch
   that could not be deleted locally because a checkout outside `worktreeRoot` holds it
-- the manifest's run time, and per repo: worktrees pruned (all of the run's PRs merged),
-  or kept (n still open)
+- the manifest's run time, and per repo: the shared worktree removed after all cleanup
+  checks passed, or kept with the reason; list older/interrupted worktrees preserved
+- recovery inventory from `state.mjs list-recovery <config-file>`, with paths, reasons,
+  allocated bytes per tree and total (including older recoveries)
 - the budget line before and after
 - how many queue entries were unblocked by merges, and a suggestion to run
   `/dev-autofix:run` if any were

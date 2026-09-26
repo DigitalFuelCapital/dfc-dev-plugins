@@ -1,8 +1,8 @@
 {
   "name": "dev-autofix",
   "displayName": "Dev Autofix",
-  "description": "Spend leftover Claude subscription budget on small, safe, pre-planned code fixes landed as signed draft PRs. Includes a backlog planner, a review step that addresses your PR comments or merges on an explicit approval, a malware-aware push gate and a budget snapshot for the status line.",
-  "version": "2.0.0",
+  "description": "Spend leftover Claude subscription budget on small, safe, pre-planned code fixes landed as signed draft PRs. Includes a backlog planner, batch PR review for Claude Code or Codex, a finish step that addresses findings or merges on explicit approval, a malware-aware push gate and a budget snapshot for the status line.",
+  "version": "3.0.0",
   "author": {
     "name": "Digital Fuel Capital"
   },

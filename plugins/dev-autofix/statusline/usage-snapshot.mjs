@@ -16,12 +16,13 @@
 // line re-runs on refreshInterval with the rate_limits from its own last API
 // response, so an idle session replays old (lower) usage. Usage only rises
 // within a window, so per window we keep the max, and ignore payloads from an
-// older window. `observed_at` only moves when a session reports a new API
-// response (its cost or rate_limits changed), never on an idle replay.
+// older window. Per-window observations move on new API responses, never idle
+// replays; observed_at is their conservative minimum.
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // Two reports of the same window can disagree on resets_at by a few seconds.
 const WINDOW_SLOP_SECONDS = 300;
@@ -104,17 +105,13 @@ const mergeWindow = (prevPct, prevReset, inPct, inReset, now) => {
   return [Math.max(prevPct, inPct), Math.max(prevReset, inReset), inPct >= prevPct];
 };
 
-let raw = '';
-process.stdin.on('data', (c) => (raw += c));
-process.stdin.on('end', () => {
+export function writeSnapshot(j, { directory, now = Math.floor(Date.now() / 1000) } = {}) {
   try {
-    const j = JSON.parse(raw);
     const rl = j.rate_limits;
     if (!rl) return;
 
-    const now = Math.floor(Date.now() / 1000);
     const sessionId = j.session_id ?? '';
-    const dir = path.join(os.homedir(), '.claude', 'usage');
+    const dir = directory ?? path.join(os.homedir(), '.claude', 'usage');
     fs.mkdirSync(dir, { recursive: true });
     const latestFile = path.join(dir, 'latest.json');
     const sessionsFile = path.join(dir, 'sessions.json');
@@ -139,10 +136,16 @@ process.stdin.on('end', () => {
       const has7 = pct(rl.seven_day) != null;
       const accepted = isNewObservation && (has5 || has7) && (!has5 || used5) && (!has7 || used7);
 
+      // KEY-DECISION 2026-09-26: each budget window has its own freshness; a partial update cannot renew the other.
+      const observed5 = isNewObservation && used5 ? now : (prev.observed5 ?? null);
+      const observed7 = isNewObservation && used7 ? now : (prev.observed7 ?? null);
+
       // Shape is a contract; the skills read exactly these keys.
       const snap = {
         ts: now,
-        observed_at: accepted ? now : (prev.observed_at ?? null),
+        observed_at: observed5 != null && observed7 != null ? Math.min(observed5, observed7) : null,
+        observed5,
+        observed7,
         session_id: accepted ? sessionId : (prev.session_id ?? sessionId),
         model: accepted ? (j.model?.id ?? '') : (prev.model ?? ''),
         pct5,
@@ -165,4 +168,12 @@ process.stdin.on('end', () => {
   } catch {
     // Unparseable input or a read-only HOME must never break the status line.
   }
-});
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  let raw = '';
+  process.stdin.on('data', (chunk) => (raw += chunk));
+  process.stdin.on('end', () => {
+    try { writeSnapshot(JSON.parse(raw)); } catch {}
+  });
+}

@@ -40,7 +40,7 @@
       "type": "integer",
       "minimum": 60,
       "default": 900,
-      "description": "Refuse to act on a usage snapshot older than this. The status line refreshes it constantly, so a stale file means the status line is not wired up."
+      "description": "Maximum age of each available window's observation (observed5 or observed7). An idle status-line refresh does not renew observations; stale windows need a new API reading."
     },
 
     "perFixPercentEstimate": {
@@ -93,7 +93,7 @@
       "type": "integer",
       "minimum": 1,
       "default": 150,
-      "description": "A fix whose diff grows past this is reverted and re-scoped smaller."
+      "description": "A fix whose diff grows past this is blocked and preserved for re-scoping."
     },
 
     "queuePath": {
@@ -105,7 +105,7 @@
     "worktreeRoot": {
       "type": "string",
       "default": "~/.claude/autofix/worktrees",
-      "description": "Directory for throwaway worktrees and planning scratch. Must be outside every repo checkout, or the checkout's typecheck, lint and test globs pick up the worktree copies."
+      "description": "Directory for reusable worktrees, preserved recoveries and planning scratch. Must be outside every repo checkout, or the checkout's typecheck, lint and test globs pick up the worktree copies."
     },
 
     "usageSnapshotPath": {
@@ -140,12 +140,12 @@
       "description": "Repositories in scope. Each gets its own single-occupancy worktree.",
       "items": {
         "type": "object",
-        "required": ["name", "path", "remote", "baseBranch"],
+        "required": ["name", "path", "remote", "baseBranch", "verify"],
         "additionalProperties": false,
         "properties": {
           "name": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9._-]+$",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*$",
             "description": "Short identifier, used for the worktree directory and in reports."
           },
           "path": {
@@ -184,9 +184,16 @@
           },
           "verify": {
             "type": "array",
-            "items": { "type": "string" },
+            "items": { "type": "string", "pattern": "\\S" },
             "minItems": 1,
-            "description": "Commands that must pass before a PR is opened. Keep these fast and non-interactive."
+            "description": "Required nonempty commands that must pass before a PR is opened or merged. Keep these fast and non-interactive."
+          },
+          "commandTimeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 600,
+            "description": "Per-command timeout for merge verification's install, prepare and verify commands. Runs with CI=1; timeout terminates the command process group and records failure."
           },
           "forbidden": {
             "type": "array",
