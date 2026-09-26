@@ -140,7 +140,8 @@ git -C <repo.path> merge-base --is-ancestor <oid> origin/<repo.baseBranch>
 Then, for every `pushed (<branch>, ...)` entry, look for its PR with
 `gh pr list -R <repo.remote> --head <branch> --state all --json number`. If one exists,
 set `pr-open (PR #n, ...)`; otherwise retry the `gh pr create` below with that recorded
-branch and `<worktreeRoot>/pr/<slug>.md`, and set `pr-open` on success.
+branch and `<worktreeRoot>/pr/<slug>.md`, and set `pr-open` on success. A PR opened by
+that retry was created by this run, so record it in the run manifest (step 5).
 
 **The queue.** Before briefing a worker, take the first entry in `queuePath` for its repo
 with `status: ready`, whose `kind:` is not `security`, and whose `after:` is `none` or
@@ -276,6 +277,21 @@ Record `pushed` before `gh pr create` so a PR failure can never make the entry l
 untouched and eligible for a second fix. If `gh pr create` fails, retry it once; if it
 still fails, leave the entry `pushed` and list it in the report. A `pushed` entry is
 never picked up as `ready`.
+
+**Run manifest.** `/dev-autofix:review` acts on exactly the PRs the last run opened, so
+record each one in `<worktreeRoot>/last-run.json` as soon as `gh pr create` succeeds.
+The first PR this run opens replaces the file, and later ones append to it. A run that
+opens no PRs leaves the previous run's manifest in place, so review still has something
+to act on.
+
+```bash
+m=<worktreeRoot>/last-run.json
+# first PR of this run:
+jq -n --arg t "<run start, ISO 8601>" '{startedAt: $t, prs: []}' > $m
+# every PR, including the first:
+jq --arg r <repo.name> --argjson n <number> --arg b <branch> --arg u <url> \
+  '.prs += [{repo: $r, number: $n, branch: $b, url: $u}]' $m > $m.tmp && mv $m.tmp $m
+```
 
 Never push to `baseBranch`, never force-push, never merge.
 

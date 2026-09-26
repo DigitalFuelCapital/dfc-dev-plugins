@@ -69,6 +69,26 @@
       "description": "Model for fix workers. Planning inherits the lead model."
     },
 
+    "reviewers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "GitHub logins whose PR comments /dev-autofix:review acts on. Defaults to the authenticated gh user. Comments from anyone else are never acted on."
+    },
+
+    "approveTokens": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "default": ["LGTM", "/merge"],
+      "description": "A pending review that is exactly one of these (case-insensitive, nothing else in the comment, no other pending comments) makes /dev-autofix:review merge the PR. Anything else is treated as concerns to address."
+    },
+
+    "mergeMethod": {
+      "enum": ["squash", "merge", "rebase"],
+      "default": "squash",
+      "description": "How /dev-autofix:review merges an approved PR."
+    },
+
     "maxDiffLines": {
       "type": "integer",
       "minimum": 1,
