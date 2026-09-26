@@ -278,7 +278,7 @@ untouched and eligible for a second fix. If `gh pr create` fails, retry it once;
 still fails, leave the entry `pushed` and list it in the report. A `pushed` entry is
 never picked up as `ready`.
 
-**Run manifest.** `/dev-autofix:review` acts on exactly the PRs the last run opened, so
+**Run manifest.** `/dev-autofix:finish` acts on exactly the PRs the last run opened, so
 record each one in `<worktreeRoot>/last-run.json` as soon as `gh pr create` succeeds.
 The first PR this run opens replaces the file, and later ones append to it. A run that
 opens no PRs leaves the previous run's manifest in place, so review still has something

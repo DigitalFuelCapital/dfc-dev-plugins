@@ -1,11 +1,11 @@
 ---
-name: review
+name: finish
 description: Act on your review of autofix PRs. For each PR with a new review comment from you, either has an Opus worker address the concerns and posts a follow-up comment saying what changed, or - when the comment is an explicit approve token such as LGTM - syncs the branch with the base, merges it, and cleans up. Invoke manually after reviewing.
 disable-model-invocation: true
 argument-hint: "[repo ...] [pr=N ...] [dry-run]"
 ---
 
-# /dev-autofix:review - act on your PR review
+# /dev-autofix:finish - act on your PR review
 
 `/dev-autofix:run` opens draft PRs and stops. You review each one and leave a comment.
 This skill reads those comments and closes the loop:
@@ -119,7 +119,7 @@ Use the worktree `/dev-autofix:run` already created for the repo at
 reusing it avoids a full reinstall per PR. Create it only if it is missing, with the same
 command `run` uses. Never create a second worktree for a repo that already has one.
 
-Do not run `/dev-autofix:review` and `/dev-autofix:run` on the same repo at the same time.
+Do not run `/dev-autofix:finish` and `/dev-autofix:run` on the same repo at the same time.
 The worktree is single-occupancy. If `git -C $wt status --porcelain` shows changes, or a
 merge or rebase is in progress, that could be another session mid-fix: stop for that repo
 and ask, rather than resetting over it.

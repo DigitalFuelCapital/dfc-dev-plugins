@@ -14,7 +14,7 @@ decided was worth doing, and stops at a reserve so it never eats the budget you 
 | **Budget snapshot** | `statusline/usage-snapshot.mjs`, piped from your status line. Persists the rate limits the skills gate on. The data source, not decoration. |
 | **`/dev-autofix:plan`** | Research. Investigates the repos, verifies findings against the base branch, writes a backlog of pre-verified one-PR fix plans. |
 | **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in throwaway worktrees, gates each branch, opens one draft PR each, stops at the reserve. |
-| **`/dev-autofix:review`** | Follow-through. Reads your comment on each PR. Concerns: an Opus worker addresses them, the lead gates and pushes, then posts what was done. `LGTM`: syncs with the base and merges; once all of the run's PRs in a repo are merged, prunes its worktrees. Walks the PRs the last run opened in number order, reusing run's worktrees. |
+| **`/dev-autofix:finish`** | Follow-through. Reads your comment on each PR. Concerns: an Opus worker addresses them, the lead gates and pushes, then posts what was done. `LGTM`: syncs with the base and merges; once all of the run's PRs in a repo are merged, prunes its worktrees. Walks the PRs the last run opened in number order, reusing run's worktrees. |
 
 Planning and fixing are separate on purpose. Planning is expensive, reads widely and needs
 judgement. Fixing is cheap, reads one plan and needs obedience. Splitting them means the
@@ -41,18 +41,18 @@ update changed the writer. Manual steps: [statusline/README.md](statusline/READM
 /dev-autofix:init          # detect repos, write autofix.config.json, check budget wiring
 /dev-autofix:plan          # fill the backlog with verified fix plans - review it
 /dev-autofix:run           # spend leftover budget landing them as draft PRs
-/dev-autofix:review        # after you comment on the PRs: address concerns or merge
+/dev-autofix:finish        # after you comment on the PRs: address concerns or merge
 ```
 
 **Reviewing.** Comment on the PR as you normally would - an issue comment, a review body
-or inline comments. Then run `/dev-autofix:review`. A PR is merged only when your new
+or inline comments. Then run `/dev-autofix:finish`. A PR is merged only when your new
 comment is exactly an approve token (`LGTM` or `/merge` by default, see `approveTokens`)
 with nothing else pending. Anything else, including "LGTM but rename X", is treated as
 concerns to address. Each follow-up the skill posts carries a hidden marker, so it only
 acts on comments newer than its last reply; comment again to trigger another round.
 It checks every PR the last `/dev-autofix:run` opened (recorded in
 `<worktreeRoot>/last-run.json`), oldest first, in the worktree `run`
-already set up for each repo. Don't run `review` and `run` on the same repo at the same time.
+already set up for each repo. Don't run `finish` and `run` on the same repo at the same time.
 
 Review `AUTOFIX_QUEUE.md` between plan and run. Entries marked `needs-human` are waiting on
 a decision only you can make; they are never auto-executed. Flip them to `ready` once you
@@ -67,8 +67,8 @@ Useful arguments:
 /dev-autofix:run dry-run         # pick candidates and print the briefs, change nothing
 /dev-autofix:run dfc-tools       # one repo only
 /dev-autofix:run model=haiku     # cheaper fix workers
-/dev-autofix:review dry-run      # show which PRs would be addressed vs merged
-/dev-autofix:review pr=42        # one PR only
+/dev-autofix:finish dry-run      # show which PRs would be addressed vs merged
+/dev-autofix:finish pr=42        # one PR only
 ```
 
 ## Configuration
@@ -93,7 +93,7 @@ The fields that matter most:
 - **`sources`** - audit documents the planner mines for candidates. Treated as dated
   leads and re-verified before use.
 - **`reviewers`**, **`approveTokens`**, **`mergeMethod`** - whose comments
-  `/dev-autofix:review` acts on (default: your `gh` login), which exact comments mean
+  `/dev-autofix:finish` acts on (default: your `gh` login), which exact comments mean
   "merge", and how (default `squash`).
 
 Worktrees live under `~/.claude/autofix/worktrees`, outside every checkout. A worktree
@@ -106,7 +106,7 @@ This plugin writes code and pushes branches, so the boundaries are explicit.
 **Invoking `/dev-autofix:run` is the authorization.** It covers `branchPrefix` branches, their
 commits and pushes, and draft PRs against `baseBranch`. Nothing else.
 
-**Invoking `/dev-autofix:review` is the authorization to follow through.** It covers
+**Invoking `/dev-autofix:finish` is the authorization to follow through.** It covers
 signed commits (including merges of the base) and fast-forward pushes to the PR's own
 branch, PR comments, and - only on an exact approve token from a listed reviewer -
 marking the PR ready, merging it pinned to the verified head commit, and deleting its
@@ -135,7 +135,7 @@ dependencies, acting on anything filed under a security heading, bare `git stash
 unsigned commits, `--no-verify`, force-pushing and pushing to the base branch.
 
 **Every PR is a draft**, one concern, under a diff cap, with the repo's own verification
-green. `/dev-autofix:run` never merges. `/dev-autofix:review` merges only when you
+green. `/dev-autofix:run` never merges. `/dev-autofix:finish` merges only when you
 write the approve token, and only after the synced branch passes verification and CI.
 
 **Budget gating fails closed.** A run stops if the snapshot is missing, stale, or shows the
@@ -157,7 +157,7 @@ written out.
 
 ## FAQ
 
-**Does it merge anything?** Only through `/dev-autofix:review`, only when your comment
+**Does it merge anything?** Only through `/dev-autofix:finish`, only when your comment
 is exactly an approve token, and only after the branch is synced with the base,
 re-verified, and CI is green. Nothing is ever pushed directly to the base branch, and
 nothing is ever force-pushed.
