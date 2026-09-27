@@ -42,21 +42,51 @@ Solid, careful work that has grown past what the problem probably needs.
 
 ## Live test checklist
 
-- [ ] `/dev-autofix:run` on a low-risk repo opens at least 2 draft PRs in the same repo
-- [ ] Lock acquisition finds the Claude process (not a shell) and releases cleanly
-- [ ] `/dev-autofix:review` posts `LGTM` and writes an approval record under `review/records/`
-- [ ] Manual `LGTM` issue comment binds via the activity API (or reports evidence unavailable clearly)
-- [ ] `/dev-autofix:finish` merges both PRs in one pass (second PR re-verifies against the moved base, no re-review)
-- [ ] `UNKNOWN` mergeability after the first merge resolves within the 30s poll
-- [ ] Verification timeout and `CI=1` behave with the repo's real test runner
-- [ ] Deliberately failing fix gets quarantined; `list-recovery` reports it with disk usage
-- [ ] Note every point where the model skipped, reordered or improvised a step
+First live cycle: dfc-tools, 2026-09-27. init -> plan (14 entries) -> run (PRs #550-#554) ->
+review -> finish (all 5 merged).
+
+- [x] `/dev-autofix:run` on a low-risk repo opens at least 2 draft PRs in the same repo (5)
+- [x] Lock acquisition and release worked for run and finish (owner record not inspected)
+- [x] `/dev-autofix:review` posts `LGTM` and writes an approval record under `review/records/`
+- [~] Manual `LGTM` binds via the activity API: only the one-push case was exercised
+      (and only because finish skipped the records - see below)
+- [x] `/dev-autofix:finish` merges all PRs in one pass, re-verifying each against the moved base, no re-review
+- [ ] `UNKNOWN` mergeability resolves within the 30s poll: unproven (an ad-hoc wait hid it)
+- [~] `CI=1` works with vitest; the timeout path was never triggered
+- [ ] Deliberately failing fix gets quarantined: not exercised (nothing failed)
+- [x] Improvised steps noted below
+
+### What the live run showed
+
+- **Prose steps were improvised.** The lead hand-wrote about 8 scripts: brief, gate,
+  queue edits, publish, approval input, merge, cleanup. Finish ignored review's approval
+  records and bound approvals from push history instead. A zsh word-splitting slip broke
+  one loop, harmlessly.
+- **Remote branch deletion failed** on a repo with `delete_branch_on_merge`, because the
+  lease delete errors when the branch is already gone.
+- **The size rule was ambiguous.** A ~2-line entry landed at 7 lines (Prettier wrapping).
+- **A worker dropped the deploy note** for an edge function from the PR body.
+- **`perFixPercentEstimate: 3` was high.** Fixes cost 0-1% each; planning was the
+  expensive part.
+- **Validation worked.** Integration verification was cheap (~20s per PR) and meaningful as
+  the base moved. No recovery trees accumulated, and locks added no friction.
+
+### Addressed in 3.1.0
+
+`scripts/pr.mjs` now owns the queue, briefs, gate, publish, approval input and cleanup, with
+tests. Finish prefers records. Cleanup treats an absent remote branch as done. The size cap
+is `maxDiffLines` (or the stated size plus 50% when larger). Publish enforces deploy lines.
+The perFix default is now 2. Decisions: finish still removes the worktree after checks;
+lock breaking and push-history approval stay until a real case argues otherwise.
+
+Still untested: address path (Opus worker), conflict resolution, stale-head re-review,
+quarantine, command timeout, lock break, merge queues.
 
 ## Next steps after the test
 
-1. Fix what the live run breaks before adding anything.
-2. Prune: move remaining step-by-step logic into helper commands so skills read as short
-   procedures that mostly call scripts.
+1. ~~Fix what the live run breaks before adding anything.~~ Done in 3.1.0.
+2. ~~Prune: move step-by-step logic into helper commands.~~ Largely done in 3.1.0 for run and
+   finish. Worktree preparation and quarantine triggers remain prose.
 3. Rewrite the README around the design, not the fix history.
-4. Decide whether manual-approval recovery and lock breaking earn their complexity, versus
-   "use a formal review" and "delete the lock yourself" for a single-user tool.
+4. Revisit lock breaking once a real abandoned lock has occurred.
+5. Exercise the failure paths deliberately.

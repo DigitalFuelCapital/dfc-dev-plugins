@@ -46,7 +46,7 @@
     "perFixPercentEstimate": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "default": 3,
+      "default": 2,
       "description": "Starting estimate of budget percent one fix consumes, used to size parallel waves (with a 2x safety factor). Limits the risk of crossing the reserve; cannot guarantee it, since a fix's cost is not known in advance. Replaced by the largest observed per-fix delta during a run."
     },
 

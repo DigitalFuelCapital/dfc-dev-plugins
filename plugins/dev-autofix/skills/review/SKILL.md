@@ -154,8 +154,9 @@ For an eligible worktree:
 3. Inspect `repo.prepare`, `repo.verify`, and relevant tests. Run proportionate,
    non-interactive checks at that exact head, with any necessary safe code generation.
    Honor `forbidden` rules; do not run fix-mode commands, migrations, deployment,
-   production writes, or tests needing production secrets. Keep experimental harnesses
-   and output in temporary locations. Distinguish local checks, isolated reproductions,
+   production writes, or tests needing production secrets. Write command logs and
+   experimental harness output under `<worktreeRoot>/review/scratch/`, never `/tmp`,
+   unless that directory is unwritable. Distinguish local checks, isolated reproductions,
    static review, and CI evidence.
 4. In a finally-style cleanup even after failure/interruption, inspect status and
    restore the original branch or detached commit without force. If the original branch

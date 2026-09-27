@@ -5,6 +5,21 @@ the installed plugin root, two directories above a skill's directory. The helper
 `<plugin>/scripts/state.mjs`. It returns JSON and exits nonzero on a failed check. Do
 not continue a dependent action after failure. Shell-quote paths and arguments.
 
+## Helpers
+
+| Command | Does |
+|---|---|
+| `state.mjs config / lock / unlock / inspect-lock / resume-lock / break-lock` | config check and lock ownership |
+| `state.mjs worktree / quarantine / list-recovery` | worktree guard and preserved recoveries |
+| `state.mjs record-pr / record-approval / approval` | manifest, approval records, approval checker |
+| `pr.mjs queue next / set-status / inbox` | queue selection and bookkeeping |
+| `pr.mjs brief` | render a fix worker's brief from `references/fix-brief.md` |
+| `pr.mjs gate run / finish` | push gate (read-only) |
+| `pr.mjs publish` | gate, push, draft PR, registration, queue status |
+| `pr.mjs approval-input` | review timeline, classification, approval evidence |
+| `merge.mjs verify / check / release` | local integration verification |
+| `pr.mjs cleanup / remove-worktree` | post-merge queue, branch and worktree cleanup |
+
 ## Config and ownership
 
 Run `node <plugin>/scripts/state.mjs config <config-file>` before work. This checks the
@@ -135,26 +150,34 @@ only after installation succeeds. Never compare full `shasum` output with this f
 
 ## PR registration and recovery
 
-After confirmed creation **or discovery of an existing PR for a `pushed` entry**, write
-an entry JSON file containing `repo`, `number`, `branch`, and canonical GitHub `url`.
-Verify repository/head/base first. Register before changing queue status to `pr-open`:
+`scripts/pr.mjs publish` registers each PR it creates or discovers, after verifying
+repository/head/base and before setting `pr-open`. For a PR discovered outside `publish`
+(a `pushed` entry in run's recovery pass), write an entry JSON file with `repo`, `number`,
+`branch` and canonical `url`, then:
 
 ```bash
 node <plugin>/scripts/state.mjs record-pr <worktreeRoot> <startedAt> <entry-file> <runToken>
 ```
 
-Only the lead calls this helper, **serially**, while holding the run lock. Workers never
-write the manifest. No second manifest lock is needed. The atomic upsert deduplicates by
-repo/number. The first registration replaces the prior manifest; later registrations
-append. No registrations leave the prior manifest intact. Recovered PRs belong to this
-pass. On failure, leave the queue `pushed`, preserve the entry file and stop publication
-until registration succeeds. Malformed manifests are preserved and block registration.
+Only the lead calls this, **serially**, while holding the run lock. Workers never write the
+manifest. The atomic upsert deduplicates by repo/number. The first registration of a run
+replaces the prior manifest; later ones append; no registrations leave it intact. On
+failure, leave the queue `pushed` and stop publication until registration succeeds.
+Malformed manifests are preserved and block registration.
 
 ## Approval records
 
-Use `<worktreeRoot>/review/records/` for durable review records and
-`<worktreeRoot>/review/scratch/` for reports, prepared comments and verification input.
-Review saves an immutable record after confirming publication:
+`<worktreeRoot>/review/records/` holds two kinds of file:
+
+- `<repo>-pr<N>-comment<ID>.approval.json` - the immutable approval record review saves
+  after publishing an `LGTM`. Finish binds approvals from these first.
+- `<repo>-pr<N>-<headSha>.json` - review's own per-round state (reviewed head/base,
+  validation results, posted comment). Finish does not read these.
+
+`<worktreeRoot>/review/scratch/` holds reports, prepared comments, verification logs and
+approval inputs. Use `/tmp` only when `review/scratch/` is unwritable, and report where.
+
+The approval record:
 
 ```json
 {
@@ -167,42 +190,31 @@ Review saves an immutable record after confirming publication:
 }
 ```
 
-Save it with `node <plugin>/scripts/state.mjs record-approval <record-path> <input-file>`
-at `review/records/<repo.name>-pr<N>-comment<ID>.approval.json`. Field order does not
-matter. Never rebind an existing record to a later head or infer the reviewed SHA from
-whatever head finish now sees.
+Save it with `node <plugin>/scripts/state.mjs record-approval <record-path> <input-file>`.
+Field order does not matter. Never rebind an existing record to a later head or infer the
+reviewed SHA from whatever head finish now sees.
 
-Before classification and immediately before merging, construct fresh metadata and run
-`node <plugin>/scripts/state.mjs approval <input-file>`. Input: `remote`, `number`,
-`headRef`, current `headSha`, resolved `reviewers` and `approveTokens`, complete `pending`
-timeline, and `record` if available. Each pending entry has `kind` (`issue`, `review`,
-`inline`), `url`, `author`, `body`. Formal reviews include `commitSha` from `commit_id`
-and `state`; only non-dismissed `APPROVED`/`COMMENTED` reviews with an exact token qualify.
+`node <plugin>/scripts/pr.mjs approval-input <config> <repo> <n> <out>` builds the input
+the checker (`state.mjs approval`) and `merge.mjs` consume: `remote`, `number`, `headRef`,
+current `headSha`, `reviewers`, `approveTokens`, the complete `pending` timeline, and one of
+`record` (preferred), a formal review's `commitSha`, or `history`. Only non-dismissed
+`APPROVED`/`COMMENTED` formal reviews with an exact token qualify.
 
 ### Manual conversation approvals
 
-An unrecorded manual `LGTM` is supported using server push history. Fetch
-`repos/<remote>/activity` with `ref=refs/heads/<headRef>`, `direction=desc`, `per_page=100`,
-following every Link pagination cursor. Do not filter by actor or activity type: force
-pushes, creation, deletion and merges matter too. Include history reaching an event
-strictly before the comment and every event through the latest head. GitHub's
-[repository activity API](https://docs.github.com/en/rest/repos/repos#list-repository-activities)
-provides `timestamp`, `before`, `after`, `ref`, and `activity_type`.
-
-Add the issue comment's `created_at`/`updated_at` as `createdAt`/`updatedAt`. Supply
-`history: {remote, ref, complete: true, observedHead, activities}` only after fetching
-all pages successfully and re-reading the PR head after collection. `observedHead`
-must equal that fresh head. The helper binds the token to the last head before the
-comment and checks a continuous chain to the current head. Missing/truncated history,
-edited comments, same-second ambiguity, and branch recreation/deletion fail closed.
-Never substitute commit author dates, repository `pushed_at`, or an incomplete PR
-commit timeline. API errors or uncertain ordering mean `approval evidence unavailable`.
+Without a record, a manual `LGTM` is bound using server push history
+([repository activity API](https://docs.github.com/en/rest/repos/repos#list-repository-activities),
+every page, no actor or type filter, head re-read after collection). The checker binds the
+token to the last head before the comment and requires a continuous chain to the current
+head. Missing or truncated history, edited comments, same-second ambiguity, and branch
+recreation or deletion fail closed as `evidence-unavailable`. Never substitute commit
+author dates, repository `pushed_at`, or an incomplete PR commit timeline.
 
 If evidence proves the approved head is stale, finish posts `Re-review required` and
-consumes that stale token with its addressed marker. If evidence is merely unavailable
-or ambiguous, leave it pending and report in chat, without a marker or a new approval.
-Review may repair its missing record only from saved original publication evidence.
-Do not run a fix worker just because an approval cannot be bound.
+consumes that token with its addressed marker. If evidence is merely unavailable or
+ambiguous, it leaves the token pending and reports in chat, without a marker or a new
+approval. Review may repair its missing record only from saved original publication
+evidence. Do not run a fix worker just because an approval cannot be bound.
 
 ## Verification for batch merges
 

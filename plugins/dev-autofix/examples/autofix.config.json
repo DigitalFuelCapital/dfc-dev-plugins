@@ -4,7 +4,7 @@
   "reservePercent": 10,
   "fiveHourCeiling": 90,
   "maxFixesPerRun": 5,
-  "perFixPercentEstimate": 3,
+  "perFixPercentEstimate": 2,
   "workerModel": "sonnet",
   "maxDiffLines": 150,
 

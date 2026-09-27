@@ -297,7 +297,8 @@ function worktreeIdentity(config, repoName, token, git) {
   return { path: actual, exists: true, headSha: git(actual, ['rev-parse', 'HEAD']) };
 }
 
-export function checkWorktree(config, repoName, token, git = gitRead) {
+// requireRetained guards checkouts; the read-only push gate may inspect unretained detached commits.
+export function checkWorktree(config, repoName, token, git = gitRead, { requireRetained = true } = {}) {
   const result = worktreeIdentity(config, repoName, token, git);
   if (!result.exists) return result;
   const actual = result.path;
@@ -306,7 +307,7 @@ export function checkWorktree(config, repoName, token, git = gitRead) {
     const file = git(actual, ['rev-parse', '--git-path', operation]);
     requireValue(!fs.existsSync(path.resolve(actual, file)), `Worktree has an active ${operation}; preserve it`);
   }
-  requireValue(git(actual, ['for-each-ref', '--contains=HEAD', '--format=%(refname)', 'refs/heads', 'refs/remotes', 'refs/autofix/verify']) !== '', 'Worktree HEAD has no retaining branch or verification ref; preserve its commits before switching');
+  requireValue(!requireRetained || git(actual, ['for-each-ref', '--contains=HEAD', '--format=%(refname)', 'refs/heads', 'refs/remotes', 'refs/autofix/verify']) !== '', 'Worktree HEAD has no retaining branch or verification ref; preserve its commits before switching');
   return result;
 }
 

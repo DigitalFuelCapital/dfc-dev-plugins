@@ -220,9 +220,13 @@ written out.
 
 [scripts/state.mjs](scripts/state.mjs) handles ownership, worktree checks, PR registration,
 recovery and approval evidence. [scripts/merge.mjs](scripts/merge.mjs) executes local
-integration verification and records command results itself. See the
+integration verification and records command results itself.
+[scripts/pr.mjs](scripts/pr.mjs) owns the queue (`queue next/set-status/inbox`), fix
+briefs (`brief`, from [references/fix-brief.md](references/fix-brief.md)), the push gate
+(`gate`), publication (`publish`), approval evidence (`approval-input`) and post-merge
+cleanup (`cleanup`, `remove-worktree`). See the
 [shared state contract](references/workflow-state.md). The model still reviews code,
-collects fresh discussion evidence, waits for CI and invokes the final merge.
+waits for CI and invokes the final merge.
 
 Run recovery registers PRs found after an uncertain creation result before setting
 queue status to `pr-open`. Registration retries are idempotent. The latest run's manifest
@@ -240,6 +244,13 @@ the disk space they occupy, including dependencies.
 
 Durable review/approval records now live in `review/records/`; prepared comments and
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
+
+**Version 3.1.0:** no config changes. The steps the first live cycle showed being
+improvised now live in `scripts/pr.mjs`. Finish binds approvals from review's records
+before falling back to push history. Cleanup treats a branch that GitHub already
+auto-deleted on merge as done. The push gate's size cap is `maxDiffLines`, or the entry's
+stated size plus 50% when that is larger. Publish refuses a PR body that drops a deploy
+step the entry names. `perFixPercentEstimate` now defaults to 2.
 
 **Version 3.0.0:** upgrading from 2.x requires nonempty `verify` commands for every repo.
 The plugin version changes; the config file still uses `version: 1`.
