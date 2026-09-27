@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { acquireLock, processStart } from '../scripts/state.mjs';
 import {
   createRuntime, parseQueue, nextEntry, setStatus, addInbox, addFallbackEntry, parseRawZ, renderBrief, sizeLimit, forbiddenPath,
-  gate, publish, checkPRFile, buildApprovalInput, cleanup, removeWorktree,
+  gate, publish, checkPRFile, buildApprovalInput, cleanup, removeWorktree, WORKTREE_REMOVE_TIMEOUT_MS,
 } from '../scripts/pr.mjs';
 
 const QUEUE = `# Autofix queue
@@ -93,7 +93,7 @@ function fixture(t) {
   const runtime = createRuntime(env);
   const realGit = runtime.git;
   // Only the network boundary moves: 'origin' becomes the local bare repo for fetch/ls-remote/push.
-  runtime.git = (cwd, args) => realGit(cwd, ['fetch', 'ls-remote', 'push'].includes(args[0]) ? args.map(arg => arg === 'origin' ? bare : arg) : args);
+  runtime.git = (cwd, args, options) => realGit(cwd, ['fetch', 'ls-remote', 'push'].includes(args[0]) ? args.map(arg => arg === 'origin' ? bare : arg) : args, options);
   runtime.today = () => '2026-09-27';
   runtime.login = () => 'reviewer';
   const calls = [];
@@ -478,4 +478,16 @@ test('cleanup reports a missing merge commit instead of passing it to git', t =>
   const result = cleanup({ configFile: f.configFile, config: f.config, repo: f.config.repos[0], token: f.token, number: 7 }, f.runtime);
   assert.equal(result.ok, false);
   assert.match(result.reason, /no valid merge commit/);
+});
+
+test('remove-worktree gives git worktree remove far longer than the default 120s command timeout', t => {
+  const f = fixture(t);
+  const seen = [];
+  const inner = f.runtime.git;
+  f.runtime.git = (cwd, args, options) => { if (args[0] === 'worktree' && args[1] === 'remove') seen.push(options); return inner(cwd, args, options); };
+  f.runtime.gh = () => '[]';
+  assert.equal(removeWorktree({ configFile: f.configFile, config: f.config, repo: f.config.repos[0], token: f.token }, f.runtime).removed, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].timeout, WORKTREE_REMOVE_TIMEOUT_MS);
+  assert.ok(WORKTREE_REMOVE_TIMEOUT_MS >= 10 * 60 * 1000);
 });

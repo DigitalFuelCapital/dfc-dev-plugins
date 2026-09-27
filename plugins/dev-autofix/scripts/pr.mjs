@@ -15,6 +15,8 @@ const rootPath = config => fs.realpathSync(expand(config.worktreeRoot ?? '~/.cla
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const MARKER = '<!-- dev-autofix:review addressed=';
 const DEFAULT_TOKENS = ['LGTM', '/merge'];
+// Deleting a worktree with node_modules took over 120s in the live run; 30 minutes still bounds a hang.
+export const WORKTREE_REMOVE_TIMEOUT_MS = 30 * 60 * 1000;
 
 // KEY-DECISION 2026-09-27: one pattern list for run and finish gates; skills no longer carry grep blocks.
 export const MALWARE_PATTERNS = [
@@ -41,7 +43,7 @@ export function createRuntime(env = process.env) {
   const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], timeout: 120000, ...options }).trimEnd();
   const gh = args => execute('gh', args);
   return {
-    git: (cwd, args) => execute('git', ['-C', cwd, ...args]),
+    git: (cwd, args, options = {}) => execute('git', ['-C', cwd, ...args], options),
     gh,
     ghPages: api => JSON.parse(gh(['api', '--paginate', '--slurp', api]) || '[]').flat(),
     readPR: (remote, number) => JSON.parse(gh(['pr', 'view', String(number), '-R', remote, '--json', 'number,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,url,mergeCommit'])),
@@ -408,7 +410,7 @@ export function removeWorktree({ configFile, config, repo, token }, runtime = cr
   try { git(wt.path, ['merge-base', '--is-ancestor', 'HEAD', base]); }
   catch { return keep('worktree HEAD is not on the fetched base'); }
   checkWorktree(config, repo.name, token, git);
-  git(repo.path, ['worktree', 'remove', wt.path]);
+  git(repo.path, ['worktree', 'remove', wt.path], { timeout: WORKTREE_REMOVE_TIMEOUT_MS });
   const hashFile = path.join(rootPath(config), `${repo.name}.lock.sha`);
   if (fs.existsSync(hashFile)) fs.unlinkSync(hashFile);
   return { removed: true, path: wt.path };

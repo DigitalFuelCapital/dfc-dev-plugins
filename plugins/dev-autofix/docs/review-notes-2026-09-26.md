@@ -79,6 +79,14 @@ is `maxDiffLines` (or the stated size plus 50% when larger). Publish enforces de
 The perFix default is now 2. Decisions: finish still removes the worktree after checks;
 lock breaking and push-history approval stay until a real case argues otherwise.
 
+### 3.1.0 smoke run (2026-09-27)
+
+dfc-tools PRs #555 and #556: run, review, then finish, using only the helpers. Finish bound
+both approvals from `record`, and cleanup reported `already deleted` for both remote branches.
+One bug: `remove-worktree` hit the helpers' 120s command timeout while deleting
+`node_modules`, which left a half-removed tree (HEAD on base, only deletions). Fixed in
+3.1.1.
+
 Still untested: address path (Opus worker), conflict resolution, stale-head re-review,
 quarantine, command timeout, lock break, merge queues.
 

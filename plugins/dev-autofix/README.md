@@ -245,6 +245,9 @@ the disk space they occupy, including dependencies.
 Durable review/approval records now live in `review/records/`; prepared comments and
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
 
+**Version 3.1.1:** `remove-worktree` no longer times out after 120 seconds while Git deletes a
+worktree with `node_modules`; that command now gets up to 30 minutes.
+
 **Version 3.1.0:** no config changes. The steps the first live cycle showed being
 improvised now live in `scripts/pr.mjs`. Finish binds approvals from review's records
 before falling back to push history. Cleanup treats a branch that GitHub already
