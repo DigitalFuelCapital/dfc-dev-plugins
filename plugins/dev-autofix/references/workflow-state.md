@@ -12,12 +12,14 @@ not continue a dependent action after failure. Shell-quote paths and arguments.
 | `state.mjs config / lock / unlock / inspect-lock / resume-lock / break-lock` | config check and lock ownership |
 | `state.mjs worktree / quarantine / list-recovery` | worktree guard and preserved recoveries |
 | `state.mjs record-pr / record-approval / approval` | manifest, approval records, approval checker |
-| `pr.mjs queue next / set-status / inbox` | queue selection and bookkeeping |
+| `pr.mjs prepare` | create or reuse the managed worktree, refresh dependencies |
+| `pr.mjs queue next / set-status / inbox / add-fallback` | queue selection and bookkeeping |
 | `pr.mjs brief` | render a fix worker's brief from `references/fix-brief.md` |
-| `pr.mjs gate run / finish` | push gate (read-only) |
-| `pr.mjs publish` | gate, push, draft PR, registration, queue status |
+| `pr.mjs gate run / finish` | push gate (read-only), with move-aware size |
+| `pr.mjs publish [--max-diff N]` | gate, push, draft PR, registration, queue status |
 | `pr.mjs approval-input` | review timeline, classification, approval evidence |
-| `merge.mjs verify / check / release` | local integration verification |
+| `pr.mjs land` | verify, CI wait, approval re-check, merge, cleanup for one approved PR |
+| `merge.mjs verify / check / release` | local integration verification (used by `land`) |
 | `pr.mjs cleanup / remove-worktree` | post-merge queue, branch and worktree cleanup |
 
 ## Config and ownership

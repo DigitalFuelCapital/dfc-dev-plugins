@@ -99,38 +99,33 @@ reserve. When the budget is unavailable (above), `waveSize` is just
 
 ## 3. Prepare worktrees
 
-Never touch the user's checkout. Hold the repo lock and run the shared worktree check
-before creating or switching `<worktreeRoot>/<repo.name>`. Follow the shared
-[preparation and recovery procedure](../../references/workflow-state.md#worktree-preparation-and-recovery)
-for stale registrations and known failed work. Quarantine a failed attempt once its
-workers stop, then continue on a fresh managed tree; unknown changes block local work.
-Never reset or clean to make a worktree reusable.
+Never touch the user's checkout. Hold the repo lock, then:
 
 ```bash
-node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
-git -C <repo.path> fetch origin <repo.baseBranch> --quiet
-# If missing but registered: inspect prune candidates using the shared procedure.
-# Only after confirming all candidates are abandoned:
-git -C <repo.path> worktree prune --dry-run --verbose --expire now
-git -C <repo.path> worktree prune --verbose --expire now
-# Rerun the guard after pruning; add ONLY when exists: false and registered: false.
-node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
-git -C <repo.path> worktree add --detach <worktreeRoot>/<repo.name> origin/<repo.baseBranch>
-# After creation, or directly here for an existing clean worktree:
-node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
-git -C <worktreeRoot>/<repo.name> checkout --detach origin/<repo.baseBranch> --quiet
+node <plugin>/scripts/pr.mjs prepare <config-file> <repo.name> <repoToken>
 ```
 
-These are conditional steps, not an unconditional shell block. Stop dependent commands
-on any failure. Recheck before every later checkout. Ignored generated files remain in
-place; tracked and untracked modifications are never discarded.
+`prepare` runs the worktree guard, fetches the base, creates `<worktreeRoot>/<repo.name>` if
+it is missing or detaches an existing clean tree onto `origin/<baseBranch>`, and re-checks the
+guard. It runs `repo.install` when `node_modules` is missing or the lockfile digest changed
+(writing the digest only after success), and runs `repo.prepare` until it has succeeded once
+for the current tree, so a failed preparation is retried rather than skipped. Both
+use the per-command timeout and `CI=1`, with logs under `review/scratch/prepare-*`. It never
+resets, cleans or prunes.
 
-Run `repo.install` when `node_modules` is missing, or when `repo.lockfile` changed since
-the last run. Follow the shared [dependency cache format](../../references/workflow-state.md#dependency-cache-format):
-compare only the digest from `shasum -a 256 <lockfile> | awk '{print $1}'` with the first
-field of `<worktreeRoot>/<repo.name>.lock.sha`. After a successful install, write only
-that digest and a newline, never the filename.
-Run each `repo.prepare` command once per fresh worktree.
+Run it before the first entry and again between entries to switch the clean tree back to
+the base. On failure, read `stage`:
+
+- **`prune-needed`** - the tree is missing but still registered. Follow the shared
+  [preparation and recovery procedure](../../references/workflow-state.md#worktree-preparation-and-recovery):
+  confirm the folder was deleted (not moved or unmounted) and every
+  `git worktree prune --dry-run --verbose --expire now` candidate is abandoned, prune, then
+  run `prepare` again. Never prune on uncertainty.
+- **`install` / `prepare`** - a command failed; `steps` has its log. Stop that repo.
+- **`dirty`** - preparation left tracked or untracked changes. Preserve them and stop that repo.
+- A thrown guard error (unfinished changes, active operation, unretained HEAD, foreign
+  origin) means the tree holds work: quarantine a known failed attempt with the shared helper,
+  or stop and report unknown changes.
 
 ## 4. Fix loop
 
@@ -232,9 +227,14 @@ because a payload added in one commit and removed in the next is still published
    (`postcss`/`eslint`/`next`/`vite` config, `tsconfig*.json`, `wrangler.*`,
    `.graphqlrc.*`), or makes a file executable. An entry that genuinely needs one of these
    must be done by a human.
-2. **Size.** Net insertions plus deletions are within `maxDiffLines`, or within the
-   entry's stated size plus 50% when that is larger. Formatter line-wrapping on a tiny fix
-   stays well inside the cap.
+2. **Size.** Net insertions plus deletions are within the limit: `maxDiffLines`, or the
+   entry's stated size plus 50% when that is larger. Moved code counts once: a branch over
+   the limit still **auto-passes** when its effective size (raw minus lines moved as contiguous
+   blocks of 3 or more) is within the limit and its raw size is within 1.5 x `maxDiffLines`. `publish`
+   then adds a `Size:` line to the PR body and returns `sizeAutoPassed: true`; say so in the
+   report. Only when the user explicitly asks to push a refused branch, re-run
+   `publish ... <slug> --max-diff <N>`. It needs no status reset, and adds a
+   `Size override:` line to the PR body.
 3. **Malware signatures.** No added line matches the built-in patterns in
    `scripts/pr.mjs` (`MALWARE_PATTERNS`) or `blockPatterns`.
 4. **Signed.** Every outgoing commit passes `git verify-commit`. SSH signing needs

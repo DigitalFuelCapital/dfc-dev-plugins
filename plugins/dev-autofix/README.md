@@ -245,6 +245,13 @@ the disk space they occupy, including dependencies.
 Durable review/approval records now live in `review/records/`; prepared comments and
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
 
+**Version 3.2.0:** the push gate counts moved code once. A branch over the size limit
+auto-passes when its effective size (raw minus lines moved as contiguous blocks of 3+) is within the
+limit and its raw size is within 1.5 x `maxDiffLines`; the PR body says so. A user-approved
+`publish --max-diff N` covers the rest. New helpers `prepare` (worktree and dependencies) and
+`land` (verify, CI, re-check, merge, cleanup) replace the remaining hand-chained steps in run
+and finish.
+
 **Version 3.1.1:** `remove-worktree` no longer times out after 120 seconds while Git deletes a
 worktree with `node_modules`; that command now gets up to 30 minutes.
 

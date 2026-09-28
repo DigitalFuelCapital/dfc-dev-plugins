@@ -87,6 +87,15 @@ One bug: `remove-worktree` hit the helpers' 120s command timeout while deleting
 `node_modules`, which left a half-removed tree (HEAD on base, only deletions). Fixed in
 3.1.1.
 
+### 3.1.1 cycle and 3.2.0 (2026-09-28)
+
+dfc-tools PRs #557-#559 merged through record-bound approvals; `remove-worktree` completed in
+96s. The gate refused #559 at 160 lines against 150, though most of it was a moved function;
+pushing it needed a hand-made config copy. A concurrent Codex review held the repo lock and
+the lock correctly kept this session out of the shared worktree. 3.2.0 adds the move-aware
+size rule (which scores #559 as 114 effective, an auto-pass), `publish --max-diff`, and the
+`prepare` and `land` helpers.
+
 Still untested: address path (Opus worker), conflict resolution, stale-head re-review,
 quarantine, command timeout, lock break, merge queues.
 

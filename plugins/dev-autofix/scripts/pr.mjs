@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { checkApproval, checkWorktree, recordPR, validateConfig } from './state.mjs';
-import { releaseVerification } from './merge.mjs';
+import { checkVerifiedMerge, createRuntime as createMergeRuntime, releaseVerification, verifyMerge } from './merge.mjs';
 
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -41,7 +41,7 @@ export function forbiddenPath(file, repo = {}) {
 
 export function createRuntime(env = process.env) {
   const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], timeout: 120000, ...options }).trimEnd();
-  const gh = args => execute('gh', args);
+  const gh = (args, options = {}) => execute('gh', args, options);
   return {
     git: (cwd, args, options = {}) => execute('git', ['-C', cwd, ...args], options),
     gh,
@@ -49,6 +49,9 @@ export function createRuntime(env = process.env) {
     readPR: (remote, number) => JSON.parse(gh(['pr', 'view', String(number), '-R', remote, '--json', 'number,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,url,mergeCommit'])),
     login: () => gh(['api', 'user', '--jq', '.login']),
     today: () => new Date().toLocaleDateString('en-CA'),
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    // Long commands (install, prepare, verification) use merge.mjs's process-group runner and logs.
+    merge: createMergeRuntime(env),
   };
 }
 
@@ -173,18 +176,57 @@ export function parseRawZ(output) {
   return rows;
 }
 
-function numstat(git, cwd, range) {
-  return git(cwd, ['diff', '--numstat', ...range]).split('\n').filter(Boolean).reduce((sum, row) => {
-    const [add, del] = row.split('\t');
-    return sum + (Number(add) || 0) + (Number(del) || 0);
-  }, 0);
+// KEY-DECISION 2026-09-28: moved code counts once, not twice (#559 was a 160-line dedupe refused at 150).
+// A move is a contiguous run of added lines equal to a contiguous run of deleted lines (both within
+// one hunk), with at least minRun non-blank lines. Matching across hunk boundaries is not a move.
+export function diffSize(patch, minRun = 3) {
+  const addedBlocks = [], deletedBlocks = [];
+  let current = null, sign = null, raw = 0;
+  const flush = () => { if (current?.length) (sign === '+' ? addedBlocks : deletedBlocks).push(current); current = null; sign = null; };
+  for (const line of patch.split('\n')) {
+    const isChange = (line.startsWith('+') && !line.startsWith('+++ ')) || (line.startsWith('-') && !line.startsWith('--- '));
+    if (!isChange) { flush(); continue; } // headers, @@, context and '\ No newline' all end a block
+    raw++;
+    if (line[0] !== sign) { flush(); sign = line[0]; current = []; }
+    current.push(line.slice(1).trim());
+  }
+  flush();
+  const used = deletedBlocks.map(block => block.map(() => false));
+  const nonBlank = lines => lines.filter(Boolean).length;
+  let moved = 0;
+  for (const added of addedBlocks) {
+    let i = 0;
+    while (i < added.length) {
+      let best = { length: 0 };
+      deletedBlocks.forEach((deleted, d) => {
+        for (let j = 0; j < deleted.length; j++) {
+          let k = 0;
+          while (i + k < added.length && j + k < deleted.length && !used[d][j + k] && added[i + k] === deleted[j + k]) k++;
+          if (k > best.length) best = { length: k, d, j };
+        }
+      });
+      if (best.length && nonBlank(added.slice(i, i + best.length)) >= minRun) {
+        for (let k = 0; k < best.length; k++) used[best.d][best.j + k] = true;
+        moved += best.length;
+        i += best.length;
+      } else i++;
+    }
+  }
+  return { raw, moved, effective: raw - moved };
+}
+
+export function sizeVerdict({ raw, moved, effective }, limit, config, maxDiff = null) {
+  let cap = limit, ceiling = Math.max(limit, Math.ceil((config.maxDiffLines ?? 150) * 1.5));
+  if (Number.isSafeInteger(maxDiff) && maxDiff > 0) { cap = Math.max(cap, maxDiff); ceiling = Math.max(ceiling, maxDiff); }
+  const autoPassed = raw > cap && effective <= cap && raw <= ceiling;
+  return { raw, moved, effective, limit: cap, ceiling, override: cap > limit ? cap : null, autoPassed, ok: raw <= cap || autoPassed };
 }
 
 /**
  * Push gate. mode 'run' checks base..HEAD of a fresh fix branch; mode 'finish' checks only
  * commits added on top of the PR's remote head. Read-only: never pushes or edits anything.
  */
-export function gate({ config, repo, token, mode, statedSize = null, headRef = null, expectBranch = null }, runtime = createRuntime()) {
+export function gate({ config, repo, token, mode, statedSize = null, headRef = null, expectBranch = null, maxDiff = null }, runtime = createRuntime()) {
   const { git } = runtime;
   const failures = [], fail = (check, detail) => failures.push({ check, detail });
   const patterns = [...MALWARE_PATTERNS, ...(config.blockPatterns ?? [])].map(source => new RegExp(source));
@@ -206,7 +248,7 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
     const found = git(cwd, ['rev-list', '--merges', `${base}..HEAD`]).split('\n').filter(Boolean);
     if (found.length) fail('shape', `merge commits: ${found.join(' ')}`);
     limit = sizeLimit(config, statedSize);
-    size = numstat(git, cwd, [`${base}...HEAD`]);
+    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', `${base}...HEAD`]));
   } else {
     requireValue(headRef, 'finish gate needs the PR head branch');
     const head = `refs/remotes/origin/${headRef}`;
@@ -225,7 +267,7 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
       for (const hit of scan(addedLines(git(cwd, ['show', '--remerge-diff', '--format=', merge])), patterns)) fail('malware', `${merge.slice(0, 8)}: /${hit.pattern}/ in "${hit.line}"`);
     }
     limit = Math.ceil((config.maxDiffLines ?? 150) * 1.5);
-    size = numstat(git, cwd, [base, 'HEAD']);
+    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', base, 'HEAD']));
   }
   for (const commit of commits) {
     try { git(cwd, ['verify-commit', commit]); } catch { fail('signed', `signature invalid ${commit}`); }
@@ -237,10 +279,11 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
     }
     for (const hit of scan(addedLines(git(cwd, ['diff-tree', '--no-commit-id', '--root', '-r', '-p', '-U0', commit])), patterns)) fail('malware', `${commit.slice(0, 8)}: /${hit.pattern}/ in "${hit.line}"`);
   }
-  if (size > limit) fail('size', `${size} changed lines exceeds limit ${limit}`);
+  const verdict = sizeVerdict(size, limit, config, maxDiff);
+  if (!verdict.ok) fail('size', `${verdict.raw} changed lines (${verdict.moved} moved, ${verdict.effective} effective) exceeds limit ${verdict.limit}; auto-pass needs effective <= ${verdict.limit} and raw <= ${verdict.ceiling}`);
   const dirty = git(cwd, ['status', '--porcelain']);
   if (dirty) fail('clean', dirty.split('\n').slice(0, 10).join('; '));
-  return { ok: failures.length === 0, malware: failures.some(item => item.check === 'malware'), failures, path: cwd, branch, head: git(cwd, ['rev-parse', 'HEAD']), commits, size, limit };
+  return { ok: failures.length === 0, malware: failures.some(item => item.check === 'malware'), failures, path: cwd, branch, head: git(cwd, ['rev-parse', 'HEAD']), commits, size: verdict };
 }
 
 // ---------------------------------------------------------------- publish
@@ -258,7 +301,14 @@ export function checkPRFile(file, entryText) {
   return { title: title.trim(), body: body.join('\n').trim(), problems: [...new Set(problems)] };
 }
 
-export function publish({ configFile, config, repo, repoToken, runToken, startedAt, slug }, runtime = createRuntime()) {
+// Size exceptions are stated on the PR itself, so the reviewer sees why the cap did not apply.
+export function sizeNote(size) {
+  if (size.override) return `Size override: ${size.override} lines, approved by the user (${size.raw} changed, ${size.moved} moved).`;
+  if (size.autoPassed) return `Size: ${size.raw} changed lines (${size.moved} moved), ${size.effective} effective; auto-passed the ${size.limit}-line cap.`;
+  return '';
+}
+
+export function publish({ configFile, config, repo, repoToken, runToken, startedAt, slug, maxDiff = null }, runtime = createRuntime()) {
   const { git, gh } = runtime;
   const qfile = queueFile(configFile, config), root = rootPath(config), today = runtime.today();
   const entry = findEntry(fs.readFileSync(qfile, 'utf8'), slug);
@@ -267,7 +317,7 @@ export function publish({ configFile, config, repo, repoToken, runToken, started
   // The gate runs the full worktree guard; a dirty tree must surface as a gate failure, not a throw.
   const branch = git(path.join(root, repo.name), ['branch', '--show-current']);
   requireValue(new RegExp(`^${escape(prefix(repo))}-\\d{8}-${escape(slug)}$`).test(branch), `Worktree branch '${branch}' is not the fix branch for ${slug}`);
-  const gated = gate({ config, repo, token: repoToken, mode: 'run', statedSize: entry.statedSize, expectBranch: branch }, runtime);
+  const gated = gate({ config, repo, token: repoToken, mode: 'run', statedSize: entry.statedSize, expectBranch: branch, maxDiff }, runtime);
   if (!gated.ok) {
     if (!gated.malware) update(`blocked (push gate: ${[...new Set(gated.failures.map(item => item.check))].join(', ')})`);
     return { ok: false, stage: 'gate', stopRun: gated.malware, failures: gated.failures };
@@ -285,7 +335,7 @@ export function publish({ configFile, config, repo, repoToken, runToken, started
   let found = discover();
   if (!found) {
     const bodyFile = path.join(root, 'pr', `${slug}.body.md`);
-    fs.writeFileSync(bodyFile, pr.body);
+    fs.writeFileSync(bodyFile, [pr.body, sizeNote(gated.size)].filter(Boolean).join('\n\n'));
     try { gh(['pr', 'create', '-R', repo.remote, '--draft', '--base', repo.baseBranch, '--head', branch, '--title', pr.title, '--body-file', bodyFile]); }
     catch (error) { found = discover(); if (!found) return { ok: false, stage: 'create', status: 'pushed', error: error.message }; }
     found ??= discover();
@@ -298,7 +348,7 @@ export function publish({ configFile, config, repo, repoToken, runToken, started
   try { recordPR(root, startedAt, { repo: repo.name, number: view.number, branch, url: view.url }, runToken); }
   catch (error) { return { ok: false, stage: 'register', status: 'pushed', number: view.number, error: error.message }; }
   update(`pr-open (PR #${view.number}, ${today})`);
-  return { ok: true, number: view.number, url: view.url, branch, size: gated.size, limit: gated.limit };
+  return { ok: true, number: view.number, url: view.url, branch, size: gated.size, sizeAutoPassed: gated.size.autoPassed, sizeOverride: gated.size.override };
 }
 
 // ---------------------------------------------------------------- approval input
@@ -411,9 +461,153 @@ export function removeWorktree({ configFile, config, repo, token }, runtime = cr
   catch { return keep('worktree HEAD is not on the fetched base'); }
   checkWorktree(config, repo.name, token, git);
   git(repo.path, ['worktree', 'remove', wt.path], { timeout: WORKTREE_REMOVE_TIMEOUT_MS });
-  const hashFile = path.join(rootPath(config), `${repo.name}.lock.sha`);
-  if (fs.existsSync(hashFile)) fs.unlinkSync(hashFile);
+  for (const file of [path.join(rootPath(config), `${repo.name}.lock.sha`), prepareMarker(rootPath(config), repo)]) if (fs.existsSync(file)) fs.unlinkSync(file);
   return { removed: true, path: wt.path };
+}
+
+// ---------------------------------------------------------------- prepare
+
+const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund';
+
+/**
+ * Create or reuse the managed worktree at the base (or a PR head), then refresh dependencies.
+ * Never prunes, resets or cleans: a stale registration is reported for the skill's prune rules.
+ */
+export async function prepare({ config, repo, token, head = null, depsOnly = false }, runtime = createRuntime()) {
+  const { git } = runtime;
+  const root = rootPath(config);
+  // --deps-only refreshes dependencies in place after finish syncs the base: HEAD is an unretained
+  // local merge that must not be checked out or switched away from.
+  if (depsOnly) {
+    const wt = checkWorktree(config, repo.name, token, git, { requireRetained: false });
+    requireValue(wt.exists, 'Managed worktree is missing; run prepare without --deps-only');
+    return refreshDependencies({ config, repo, token, root, wtPath: wt.path, created: false }, runtime);
+  }
+  let wt = checkWorktree(config, repo.name, token, git);
+  const base = `refs/remotes/origin/${repo.baseBranch}`;
+  git(repo.path, ['fetch', '--no-tags', 'origin', `+refs/heads/${repo.baseBranch}:${base}`]);
+  let target = base;
+  if (head) {
+    git(repo.path, ['check-ref-format', `refs/heads/${head}`]);
+    target = `refs/remotes/origin/${head}`;
+    git(repo.path, ['fetch', '--no-tags', 'origin', `+refs/heads/${head}:${target}`]);
+  }
+  let created = false;
+  if (!wt.exists) {
+    if (wt.registered) {
+      // git prints prune --dry-run to stderr; the porcelain listing carries the same reason.
+      const listing = git(repo.path, ['worktree', 'list', '--porcelain']).split('\n\n').find(item => item.startsWith(`worktree ${wt.path}\n`)) ?? '';
+      return { ok: false, stage: 'prune-needed', path: wt.path, registration: listing };
+    }
+    git(repo.path, ['worktree', 'add', '--detach', wt.path, target]);
+    created = true;
+  } else {
+    git(wt.path, ['checkout', '--detach', target, '--quiet']);
+  }
+  wt = checkWorktree(config, repo.name, token, git);
+  return refreshDependencies({ config, repo, token, root, wtPath: wt.path, created }, runtime);
+}
+
+// Prepare commands succeed once per managed tree; the marker makes a failed attempt re-run on retry.
+const prepareMarker = (root, repo) => path.join(root, `${repo.name}.prepared`);
+const prepareFingerprint = repo => createHash('sha256').update(JSON.stringify(repo.prepare ?? [])).digest('hex');
+
+async function refreshDependencies({ config, repo, token, root, wtPath, created }, runtime) {
+  const { git } = runtime;
+  const marker = prepareMarker(root, repo);
+  if (created && fs.existsSync(marker)) fs.unlinkSync(marker);
+  const logs = path.join(root, 'review', 'scratch', `prepare-${randomUUID()}`);
+  const timeoutMs = (repo.commandTimeoutSeconds ?? 600) * 1000;
+  const steps = [];
+  const exec = async (phase, command) => {
+    fs.mkdirSync(logs, { recursive: true });
+    const log = path.join(logs, `${steps.length}.log`);
+    const result = await runtime.merge.run(command, wtPath, log, timeoutMs);
+    steps.push({ phase, command, log, ...result });
+    return result.exitCode === 0 && !result.signal && !result.timedOut;
+  };
+  const lockfile = path.resolve(wtPath, repo.lockfile ?? 'package-lock.json');
+  const digest = fs.existsSync(lockfile) ? createHash('sha256').update(fs.readFileSync(lockfile)).digest('hex') : 'no-lockfile';
+  const hashFile = path.join(root, `${repo.name}.lock.sha`);
+  const prior = fs.existsSync(hashFile) ? fs.readFileSync(hashFile, 'utf8').trim().split(/\s+/)[0] : null;
+  const install = repo.install ?? (fs.existsSync(path.join(wtPath, 'package.json')) ? DEFAULT_INSTALL : null);
+  let installed = false, prepared = false;
+  if (install && (!fs.existsSync(path.join(wtPath, 'node_modules')) || prior !== digest)) {
+    if (!await exec('install', install)) return { ok: false, stage: 'install', path: wtPath, steps };
+    fs.writeFileSync(hashFile, `${digest}\n`);
+    installed = true;
+  }
+  const fingerprint = prepareFingerprint(repo);
+  const done = fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim() === fingerprint;
+  if (!done && (repo.prepare ?? []).length) {
+    for (const command of repo.prepare) if (!await exec('prepare', command)) return { ok: false, stage: 'prepare', path: wtPath, steps };
+    prepared = true;
+  }
+  if (!done) fs.writeFileSync(marker, `${fingerprint}\n`);
+  try { checkWorktree(config, repo.name, token, git, { requireRetained: false }); }
+  catch (error) { return { ok: false, stage: 'dirty', path: wtPath, error: error.message, steps }; }
+  return { ok: true, path: wtPath, created, installed, prepared, head: git(wtPath, ['rev-parse', 'HEAD']), logs: steps.map(step => step.log) };
+}
+
+// ---------------------------------------------------------------- land
+
+const LONG_GH_MS = 60 * 60 * 1000;
+
+async function waitForChecks({ repo, number }, runtime, retries = 4, pauseMs = 15000) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      runtime.gh(['pr', 'checks', String(number), '-R', repo.remote, '--watch', '--fail-fast', '--interval', '15'], { timeout: LONG_GH_MS });
+      return { ok: true };
+    } catch (error) {
+      const output = `${error.stdout ?? ''}\n${error.stderr ?? ''}\n${error.message}`;
+      // Checks can take a few seconds to register after a ready event.
+      if (!/no checks reported/i.test(output)) return { ok: false, error: output.trim().split('\n').slice(-5).join('\n') };
+      if (attempt < retries) await runtime.sleep(pauseMs);
+    }
+  }
+  return { ok: true, noChecks: true };
+}
+
+/**
+ * Land one approved PR: verify the integration, wait for CI, re-check approval and base, merge
+ * the exact approved head, confirm, and clean up. Never posts comments or bypasses branch rules.
+ */
+export async function land({ configFile, config, repo, token, number }, runtime = createRuntime()) {
+  const root = rootPath(config);
+  const approval = () => buildApprovalInput({ config, repo, number, root }, runtime);
+  const first = approval();
+  if (first.classification !== 'approve') return { ok: false, number, stage: first.classification, reason: first.reason ?? null, pending: first.pending ?? [] };
+  let input = first.input, verification, checked, ci = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    verification = await verifyMerge(config, repo.name, token, input, runtime.merge);
+    if (verification.status !== 'passed') return { ok: false, number, stage: verification.status === 'conflict' ? 'conflict' : 'verify', error: verification.error, verificationId: verification.id };
+    if (!ci) {
+      if (first.isDraft) runtime.gh(['pr', 'ready', String(number), '-R', repo.remote]);
+      ci = await waitForChecks({ repo, number }, runtime);
+      if (!ci.ok) return { ok: false, number, stage: 'ci', error: ci.error, verificationId: verification.id };
+    }
+    const fresh = approval();
+    if (fresh.classification !== 'approve') return { ok: false, number, stage: fresh.classification, reason: fresh.reason ?? null, verificationId: verification.id };
+    try {
+      checked = await checkVerifiedMerge(config, repo.name, token, fresh.input, verification.id, runtime.merge);
+      break;
+    } catch (error) {
+      // Only a moved base is retried; the unchanged head keeps its approval.
+      if (!/changed since verification/.test(error.message) || fresh.headSha !== first.headSha || attempt === 3) return { ok: false, number, stage: 'check', error: error.message, verificationId: verification.id, attempts: attempt };
+      releaseVerification(config, repo.name, token, verification.id, runtime.merge);
+      input = fresh.input;
+    }
+  }
+  runtime.gh(['pr', 'merge', String(number), '-R', repo.remote, `--${config.mergeMethod ?? 'squash'}`, '--match-head-commit', checked.approvedHead], { timeout: 10 * 60 * 1000 });
+  let state = null;
+  for (let poll = 0; poll < 6; poll++) {
+    state = runtime.readPR(repo.remote, number).state;
+    if (state === 'MERGED') break;
+    await runtime.sleep(5000);
+  }
+  if (state !== 'MERGED') return { ok: false, number, stage: 'queued', state, verificationId: verification.id };
+  const cleaned = cleanup({ configFile, config, repo, token, number, verificationId: verification.id }, runtime);
+  return { ok: cleaned.ok, number, evidence: first.evidence, approvedHead: checked.approvedHead, verificationId: verification.id, noChecks: ci?.noChecks ?? false, cleanup: cleaned };
 }
 
 // ---------------------------------------------------------------- CLI
@@ -426,12 +620,14 @@ const USAGE = `Usage:
   pr.mjs brief <config> <repo> <slug>
   pr.mjs gate <config> <repo> <repoToken> run <slug>
   pr.mjs gate <config> <repo> <repoToken> finish <pr-number>
-  pr.mjs publish <config> <repo> <repoToken> <runToken> <startedAt> <slug>
+  pr.mjs publish <config> <repo> <repoToken> <runToken> <startedAt> <slug> [--max-diff <N>]
+  pr.mjs prepare <config> <repo> <repoToken> [--head <branch> | --deps-only]
+  pr.mjs land <config> <repo> <repoToken> <pr-number>
   pr.mjs approval-input <config> <repo> <pr-number> <out-file>
   pr.mjs cleanup <config> <repo> <repoToken> <pr-number> [verification-id]
   pr.mjs remove-worktree <config> <repo> <repoToken>`;
 
-export function main(argv, runtime = createRuntime()) {
+export async function main(argv, runtime = createRuntime()) {
   const [command, ...args] = argv;
   if (command === 'queue') {
     const [action, configFile, ...rest] = args;
@@ -470,8 +666,9 @@ export function main(argv, runtime = createRuntime()) {
       return gate({ config, repo, token, mode, headRef: pr.headRefName }, runtime);
     }
     case 'publish': {
-      const [repoToken, runToken, startedAt, slug] = rest;
-      return publish({ configFile, config, repo, repoToken, runToken, startedAt, slug }, runtime);
+      const [repoToken, runToken, startedAt, slug, flag, value] = rest;
+      requireValue(flag === undefined || (flag === '--max-diff' && /^\d+$/.test(value ?? '')), USAGE);
+      return publish({ configFile, config, repo, repoToken, runToken, startedAt, slug, maxDiff: flag ? Number(value) : null }, runtime);
     }
     case 'approval-input': {
       const [number, out] = rest;
@@ -481,6 +678,12 @@ export function main(argv, runtime = createRuntime()) {
       return { ...summary, inputFile: input ? path.resolve(out) : null };
     }
     case 'cleanup': return cleanup({ configFile, config, repo, token: rest[0], number: Number(rest[1]), verificationId: rest[2] }, runtime);
+    case 'prepare': {
+      const [token, flag, head] = rest;
+      requireValue(flag === undefined || (flag === '--head' && head) || (flag === '--deps-only' && head === undefined), USAGE);
+      return prepare({ config, repo, token, head: flag === '--head' ? head : null, depsOnly: flag === '--deps-only' }, runtime);
+    }
+    case 'land': return land({ configFile, config, repo, token: rest[0], number: Number(rest[1]) }, runtime);
     case 'remove-worktree': return removeWorktree({ configFile, config, repo, token: rest[0] }, runtime);
     default: throw new Error(USAGE);
   }
@@ -488,7 +691,7 @@ export function main(argv, runtime = createRuntime()) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    const result = main(process.argv.slice(2));
+    const result = await main(process.argv.slice(2));
     console.log(JSON.stringify(result, null, 2));
     if (result && typeof result === 'object' && (result.ok === false || result.removed === false)) process.exitCode = 1;
   } catch (error) { console.error(error.message); process.exitCode = 1; }
