@@ -2,7 +2,7 @@
 name: infiltrate
 description: Security-audit one repository commit with a small agent team that cross-verifies every finding, and write a local report of confirmed vulnerabilities for plan. Repository inspection and isolated local tests only; never fixes code or touches live systems.
 disable-model-invocation: true
-argument-hint: "[areas or security objective]"
+argument-hint: "[repo:] [areas or security objective]"
 ---
 
 # Infiltrate: find, cross-check, report
@@ -14,8 +14,9 @@ contact with deployed services. Findings stay local.
 
 ## 1. Set up
 
-1. Run `node <plugin>/scripts/state.mjs config`; if no config exists, create it as in
-   `plan` step 1. Note `repo.path`, `repo.remote`, `repo.baseBranch` and `root`.
+1. Resolve the config and repo as in `plan` step 1 (`node <plugin>/scripts/state.mjs
+   config [--repo <name>]`; a leading `<name>:` in the argument names the repo; ask if
+   several). Note `repo.path`, `repo.remote`, `repo.baseBranch` and `root`.
 2. Pick an audit ID `<YYYYMMDD>-<slug>` and `<audit>` =
    `<root>/audits/<owner>/<repo>/<id>/` (lowercase owner/repo). `git -C <repo.path> fetch
    origin <baseBranch>` (allow 120s), then `git -C <repo.path> worktree add --detach

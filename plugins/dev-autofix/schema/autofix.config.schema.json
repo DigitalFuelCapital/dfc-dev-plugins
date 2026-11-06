@@ -201,6 +201,12 @@
             "default": [],
             "description": "Hard rules for this repo only (for example its own CLAUDE.md rules), appended to worker and investigator briefs after the global forbidden list."
           },
+          "env": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+            "default": [],
+            "description": "Extra environment variable names (never values) that dev-autotask's verify passes through to install, prepare and verify commands, e.g. DATABASE_URL or NPM_TOKEN. dev-autofix ignores it."
+          },
           "testCommand": {
             "type": "string",
             "description": "Optional command template for running tests covering touched files. `{files}` is replaced with the changed paths. Omit if the repo has no unit test runner."
