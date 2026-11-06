@@ -248,8 +248,8 @@ Durable review/approval records now live in `review/records/`; prepared comments
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
 
 **Version 3.3.0:** no config changes. Version 3.3 adds delivery preflight
-(`scripts/preflight.mjs`: `gh` identity and write access, origin/base, one signing probe)
-before run and finish workers, and `scripts/review.mjs verify`, which runs review's local
+(`scripts/preflight.mjs`: `gh` identity and write access, origin/base, one signing probe
+that must pass `git verify-commit`) before run and finish workers, and `scripts/review.mjs verify`, which runs review's local
 checks at the exact PR head and restores the worktree. A replaced `last-run.json` is
 archived to `<worktreeRoot>/runs/`. A failed dependency install is now retried on the next
 prepare. See [shared workflow state](references/workflow-state.md).

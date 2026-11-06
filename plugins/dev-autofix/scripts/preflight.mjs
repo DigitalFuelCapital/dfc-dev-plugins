@@ -9,15 +9,12 @@ const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const shaOK = value => typeof value === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value);
 
 // Signs an empty, unreferenced commit in the real repo (a harmless loose object) with the
-// user's own signing config. GitHub needs only a signature from an uploaded key, so local
-// trust (%G? === 'G') is reported, not required.
+// user's own signing config, then applies the publish gate's own `git verify-commit` check.
 export function probeSigning(repoPath, git) {
   const tree = git(repoPath, ['hash-object', '-t', 'tree', '-w', '--stdin'], { input: '' });
   const commit = git(repoPath, ['commit-tree', '-S', tree, '-m', 'dev-autofix signing probe'], { timeout: 60000 });
   requireValue(shaOK(commit) && /^gpgsig(?:-sha256)? /m.test(git(repoPath, ['cat-file', 'commit', commit])), 'Probe commit carries no signature');
-  let trusted = false;
-  try { trusted = git(repoPath, ['show', '-s', '--format=%G?', commit]) === 'G'; } catch { /* untrusted locally */ }
-  return { trusted };
+  try { git(repoPath, ['verify-commit', commit]); return { verified: true }; } catch { return { verified: false }; }
 }
 
 export function createRuntime(env = process.env) {
@@ -59,7 +56,8 @@ export async function preflight(config, names = [], runtime = createRuntime()) {
   // Signing config is almost always global, so one probe covers the batch.
   if (repos.length) {
     const signing = await check(null, 'signing', () => runtime.signingProbe(repos[0]), 'Cannot create a signed commit; check the signing key and agent');
-    if (signing && signing.trusted === false) warnings.push('Probe commit is signed but not locally trusted (for example no gpg.ssh.allowedSignersFile). GitHub verifies it against your uploaded key.');
+    // publish requires `git verify-commit`, so an unverifiable signature fails here, not after the work.
+    if (signing) checks.push({ repo: null, check: 'signature-verify', ok: signing.verified === true, ...(signing.verified === true ? {} : { message: 'Probe commit is signed but git verify-commit rejects it, so publish would fail. SSH: set gpg.ssh.allowedSignersFile to a file listing your key. GPG: trust the signing key.' }) });
   }
   for (const repo of repos) {
     const origin = await check(repo.name, 'origin', () => requireValue(githubRemote(runtime.git(repo.path, ['remote', 'get-url', 'origin'])) === repo.remote.toLowerCase(), 'Wrong origin'), 'Origin does not match the configured repository');

@@ -14,14 +14,14 @@ function fixture(t) {
   const main = path.join(directory, 'main');
   fs.mkdirSync(main);
   const config = { version: 1, worktreeRoot: path.join(directory, 'worktrees'), repos: [{ name: 'repo', path: main, remote: 'Owner/Repo', baseBranch: 'main', verify: ['true'] }] };
-  const state = { login: 'Publisher', permission: 'WRITE', origin: 'https://github.com/owner/repo.git', signed: true, trusted: true, host: 'github.com', bases: [], probes: [], remotes: [] };
+  const state = { login: 'Publisher', permission: 'WRITE', origin: 'https://github.com/owner/repo.git', signed: true, verified: true, host: 'github.com', bases: [], probes: [], remotes: [] };
   const runtime = {
     get publishingHost() { return state.host; },
     login: () => { if (!state.login) throw new Error('private authentication error must not leak'); return state.login; },
     permission: repo => { state.remotes.push(repo.remote); return state.permission; },
     git: (cwd, args) => { assert.deepEqual(args, ['remote', 'get-url', 'origin']); return state.origin; },
     readBase: repo => { state.bases.push(repo.name); return SHA; },
-    signingProbe: repo => { state.probes.push(repo.name); if (!state.signed) throw new Error('private key details must not leak'); return { trusted: state.trusted }; },
+    signingProbe: repo => { state.probes.push(repo.name); if (!state.signed) throw new Error('private key details must not leak'); return { verified: state.verified }; },
   };
   return { directory, main, config, state, runtime };
 }
@@ -33,21 +33,29 @@ test('preflight resolves the gh author and checks signing, transport and write p
   assert.equal(result.author, 'Publisher');
   assert.deepEqual(result.reviewers, ['Publisher']);
   assert.equal(result.authorIsReviewer, true);
-  assert.deepEqual(result.checks.map(item => item.check), ['publishing-host', 'identity', 'signing', 'origin', 'remote-base', 'push-permission']);
+  assert.deepEqual(result.checks.map(item => item.check), ['publishing-host', 'identity', 'signing', 'signature-verify', 'origin', 'remote-base', 'push-permission']);
   assert.deepEqual(result.warnings, []);
 });
 
-test('reviewer mismatch and locally untrusted signatures are warnings, not failures', async t => {
+test('reviewer mismatch is a warning, not a failure', async t => {
   const f = fixture(t);
   f.config.reviewers = ['HumanReviewer'];
-  f.state.trusted = false;
   const result = await preflight(f.config, [], f.runtime);
   assert.equal(result.ok, true);
   assert.equal(result.authorIsReviewer, false);
   assert.ok(result.warnings.some(message => /cannot authorize finish/.test(message)));
-  assert.ok(result.warnings.some(message => /not locally trusted/.test(message)));
   f.config.reviewers = ['publisher'];
   assert.equal((await preflight(f.config, [], f.runtime)).authorIsReviewer, true);
+});
+
+test('a signature that git verify-commit rejects fails preflight like the publish gate', async t => {
+  const f = fixture(t);
+  f.state.verified = false;
+  const result = await preflight(f.config, [], f.runtime);
+  assert.equal(result.ok, false);
+  assert.equal(result.checks.find(item => item.check === 'signing').ok, true);
+  assert.match(result.checks.find(item => item.check === 'signature-verify').message, /allowedSignersFile/);
+  assert.deepEqual(result.warnings, []);
 });
 
 test('invalid origins skip transport and read-only roles cannot publish', async t => {
@@ -105,10 +113,10 @@ test('real SSH probe signs explicitly in the source repo without changing refs, 
   const f = signedRepo(t);
   const config = fs.readFileSync(path.join(f.main, '.git', 'config'), 'utf8');
   const status = f.git(['status', '--porcelain=v1', '--untracked-files=all']);
-  // No allowedSignersFile: signed but untrusted locally, which GitHub does not need.
-  assert.deepEqual(f.probe(), { trusted: false });
+  // No allowedSignersFile: signed, but git verify-commit (the publish gate) rejects it.
+  assert.deepEqual(f.probe(), { verified: false });
   f.git(['config', 'gpg.ssh.allowedSignersFile', 'allowed']);
-  assert.deepEqual(f.probe(), { trusted: true });
+  assert.deepEqual(f.probe(), { verified: true });
   f.git(['config', '--unset', 'gpg.ssh.allowedSignersFile']);
   assert.equal(fs.readFileSync(path.join(f.main, '.git', 'config'), 'utf8'), config);
   assert.equal(f.git(['status', '--porcelain=v1', '--untracked-files=all']), status);

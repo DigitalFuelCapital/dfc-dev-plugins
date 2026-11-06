@@ -39,7 +39,7 @@ export async function verifyReview(config, name, token, input, runtime = createR
   const result = { id, repo: name, number: input.number, headSha: input.headSha, baseSha: input.baseSha, startedAt: new Date().toISOString(), status: 'running', commands: [], restoration: { status: 'not-needed' } };
   const target = recordPath(root, repo, input.number, id);
   writeAtomic(target, result, { exclusive: true });
-  let worktree, original, checkoutAttempted = false, interrupted;
+  let worktree, original, headRef, checkoutAttempted = false, interrupted;
   const onInterrupt = () => { interrupted = 'SIGINT'; };
   const onTerminate = () => { interrupted = 'SIGTERM'; };
   const uninterrupted = () => requireValue(!interrupted, `Review interrupted by ${interrupted}`);
@@ -59,10 +59,11 @@ export async function verifyReview(config, name, token, input, runtime = createR
     requireValue(await runtime.readBase(repo) === input.baseSha, 'Remote base changed; refresh the review baseline');
     uninterrupted();
     result.stage = 'fetch';
-    // Same remote-tracking ref merge.mjs and prepare use; it retains the detached head.
-    const headRef = `refs/remotes/origin/${pr.headRefName}`;
+    // A private ref retains the PR head. --refmap= leaves refs/remotes/origin/<branch> alone:
+    // it may be all that retains a detached original HEAD when the PR was force-pushed.
     runtime.git(repo.path, ['check-ref-format', `refs/heads/${pr.headRefName}`]);
-    runtime.git(repo.path, ['fetch', '--no-tags', 'origin', `+refs/heads/${pr.headRefName}:${headRef}`]);
+    headRef = `refs/autofix/review/${repo.name}/pr${input.number}-${id}`;
+    runtime.git(repo.path, ['fetch', '--no-tags', '--refmap=', 'origin', `+refs/heads/${pr.headRefName}:${headRef}`]);
     requireValue(runtime.git(repo.path, ['rev-parse', headRef]) === input.headSha, 'Head moved during fetch; refresh and review again');
     requireValue(checkWorktree(config, name, token, runtime.git).headSha === original.headSha && attachment() === (original.branch ?? 'HEAD'), 'Original worktree moved before checkout');
     uninterrupted();
@@ -110,14 +111,17 @@ export async function verifyReview(config, name, token, input, runtime = createR
         result.status = 'failed';
         result.restoration = { status: 'failed', error: error.message };
         result.error ??= error.message;
-        // A preserved detached checkout keeps one private ref so later fetches cannot orphan it.
+        // A preserved detached checkout keeps the private ref so later fetches cannot orphan it.
         try {
           if (attachment() === 'HEAD') {
-            result.retainedRef = `refs/autofix/review/${repo.name}/pr${input.number}-${id}`;
-            runtime.git(repo.path, ['update-ref', result.retainedRef, runtime.git(worktree.path, ['rev-parse', 'HEAD'])]);
+            result.retainedRef = headRef;
+            runtime.git(repo.path, ['update-ref', headRef, runtime.git(worktree.path, ['rev-parse', 'HEAD'])]);
           }
         } catch (refError) { result.restoration.retainError = refError.message; }
       }
+    }
+    if (headRef && !result.retainedRef) {
+      try { runtime.git(repo.path, ['update-ref', '-d', headRef]); } catch (refError) { result.retainedRef = headRef; result.refCleanupError = refError.message; }
     }
     if (interrupted) { result.status = 'failed'; result.error ??= `Review interrupted by ${interrupted}`; }
     process.removeListener('SIGINT', onInterrupt);

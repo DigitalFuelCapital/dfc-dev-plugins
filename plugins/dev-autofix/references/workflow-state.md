@@ -175,10 +175,11 @@ Malformed manifests are preserved and block registration.
 
 `preflight.mjs` resolves the `gh` login, checks the publishing host, each repo's origin,
 readable remote base and write permission, and signs one empty, unreferenced commit with
-`git commit-tree -S` in the first selected repo (signing config is normally global). It
-changes no refs, index, files or config and pushes nothing. A signature that is not
-locally trusted (`%G?` other than `G`) and a gh login outside `reviewers` are `warnings`,
-not failures. Limits: a local signature does not prove GitHub has the key on a verified
+`git commit-tree -S` in the first selected repo (signing config is normally global), then
+runs `git verify-commit` on it, the same check publish applies; an unverifiable signature
+fails preflight (for SSH, set `gpg.ssh.allowedSignersFile`). It changes no refs, index,
+files or config and pushes nothing. A gh login outside `reviewers` is a `warning`, not a
+failure. Limits: a local signature does not prove GitHub has the key on a verified
 account or that branch rules accept the push, and a connector may publish as a different
 account than `gh`. Never fix a failed check by disabling signing.
 If the signing check fails with an agent or socket error ("couldn't get agent socket",
@@ -189,13 +190,14 @@ gpg agent unreachable), rerun preflight outside the sandbox before treating it a
 
 `review.mjs verify <config> <repo.name> <repoToken> <input-file>`, with input
 `{number,headSha,baseSha}`, runs under the repo lock. It checks worktree ownership and
-cleanliness plus PR and base identity, fetches the head into `refs/remotes/origin/<branch>`,
-detaches at the exact head, installs dependencies when stale, runs prepare/verify with
-the bounded runner, re-checks PR/base freshness and restores the original checkout. The
+cleanliness plus PR and base identity, fetches the head into a private
+`refs/autofix/review/<repo>/pr<N>-<UUID>` ref (remote-tracking refs are left alone, since
+one may be all that retains a detached original), detaches at the exact head, installs dependencies when stale, runs prepare/verify with
+the bounded runner, re-checks PR/base freshness and restores the original checkout, then deletes the private ref. The
 receipt goes to `review/records/validation/<repo>-pr<N>-<UUID>.json` and logs to
 `review/scratch/review-<UUID>/`. If restoration fails the worktree is preserved and,
-when detached, retained by `refs/autofix/review/<repo>/pr<N>-<UUID>`; inspect it before
-reuse. A passing receipt is not a code review or merge permission.
+when detached, that ref is kept (`retainedRef`) to retain it; inspect it before reuse.
+A passing receipt is not a code review or merge permission.
 
 ## Approval records
 
