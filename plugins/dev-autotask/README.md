@@ -1,100 +1,91 @@
 # Dev Autotask
 
-Complete one large development task as one PR, with an approved plan, automatic review,
-and an explicit decision to merge. Internal milestones help organize the work while
-remaining on the same task branch and PR.
+Take one large development task from plan to merge as one branch and one PR. Claude plans,
+implements and finishes; Codex reviews. GitHub (the PR, its head SHA, CI and
+`gh pr merge --match-head-commit`) holds most of the state.
 
-`dev-autotask` is a separate plugin from `dev-autofix`. It does not consume the small-fix
-queue, the last-run manifest, a subscription-budget snapshot, or the small-fix diff
-limit. Dependency, schema, build and CI changes can be part of an approved task when
-repository rules allow them.
+## Flow
+
+1. `/dev-autotask:plan <request or report path>` - Claude investigates and writes `plan.md`,
+   shows it, and stops. Ask for changes, or approve by running the next step.
+2. `/dev-autotask:run <id>` - Claude implements the plan in a dedicated worktree, runs the
+   configured checks, pushes and opens one draft PR, then stops.
+3. `$task-review <pr>` in Codex - reviews the PR against its plan, runs the checks if it can, and
+   posts one comment: findings, or `LGTM`, bound to the reviewed head SHA.
+   (`/dev-autotask:task-review` works in Claude Code too.)
+4. `/dev-autotask:finish <id>` - Claude addresses findings and pushes; go back to step 3.
+   Once the current head has an LGTM, `/dev-autotask:finish <id> merge` merges it.
+
+Nothing reviews or merges automatically. Each step stops and tells you the next one.
+
+## Security audit
+
+`/dev-autotask:infiltrate [objective]` runs before step 1. Three Claude agents each audit
+one area of a detached checkout of `origin/<baseBranch>`, then each tries to disprove
+another agent's findings. `scripts/audit.mjs` merges their JSON into a local
+`report.md`; a finding counts as confirmed only when a different agent confirmed it and
+none rejected it. Agents inspect code and run proofs of concept only in throwaway copies
+with an empty environment; nothing touches deployed systems or leaves your machine.
+
+Remediate with `/dev-autotask:plan <report.md> [finding IDs]`, then the normal flow.
+Plan re-checks each finding against the current base. Before pushing a security fix,
+`run` checks the repository's visibility and asks first if it is public, since the fix
+and its tests disclose the vulnerability.
+
+## Rules
+
+- One task, one branch (`dev/autotask-<id>`), one PR. Resuming reads `task.json`; it never
+  opens a second PR.
+- Never force-push, never push to the base branch, never edit or switch the main checkout.
+- Merge only on an explicit request, and only when an `LGTM` comment's `Reviewed head`
+  equals the current PR head (`gh pr merge --match-head-commit`). Never `--admin`.
+- Any new commit after an LGTM needs another `$task-review`.
 
 ## Install
-
-Add or update the private DFC marketplace, then install:
 
 ```text
 /plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
 /plugin install dev-autotask@dfc-dev-plugins
 ```
 
-If the marketplace is already installed, refresh it with
-`/plugin marketplace update dfc-dev-plugins` before installing. `dev-autofix` does
-not need to be installed.
+### Codex
 
-## Workflow
+Install the same plugin in Codex for the review step:
 
-| Command | Result |
-| --- | --- |
-| `/dev-autotask:plan` | Investigate one requested task and save its proposed plan, acceptance criteria and validation strategy. Present the plan for approval before source changes. |
-| `/dev-autotask:run` | Record approval of the current plan, implement its milestones on the task branch, verify the result, open or update its single PR, and invoke review automatically. |
-| `/dev-autotask:review` | Review the current PR against the approved plan and acceptance criteria, retaining unresolved findings from earlier rounds. |
-| `/dev-autotask:finish` | Address findings and verify the changes on the same branch. Merge only when the invocation includes `merge` or the current user request explicitly asks to merge. |
+```bash
+codex plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
+codex plugin add dev-autotask@dfc-dev-plugins
+```
 
-Start with `/dev-autotask:plan` and describe the task. After reviewing the saved plan,
-explicitly approve it and invoke `/dev-autotask:run`. Existing approval in the conversation
-is sufficient; the workflow records that approval before implementation. A material
-plan change needs approval of the revised plan.
-
-Run implements and reviews automatically. Review findings can then be handled with
-`/dev-autotask:finish`; invoke review again when needed. A clean automated review does not
-grant permission to merge. A merge request still requires an applicable review of the
-current head, passing verification and required checks, and confirmation that the
-current base integrates safely. Publishing a new task head requires another review.
-
-Use the task ID reported by plan when resuming any phase. The task branch is
-`dev/autotask-<task-id>`. Each phase reads the same durable task record, so an
-interrupted invocation continues the existing task instead of opening another PR.
-See [the shared workflow contract](references/workflow.md) for the phase and recovery
-procedures.
+To try local changes, register the checkout instead:
+`codex plugin marketplace add /absolute/path/to/dfc-dev-plugins`. Start a new thread and
+invoke `$task-review` from the workspace containing `dev-autotask.config.json` (or with it in
+`~/.claude/`). Review needs `git`, `gh` (authenticated) and Node.js 20+, and runs the checks
+in a temporary worktree; give it a sandbox that allows that or it reports the checks as not
+run. Only `task-review` is written for Codex; `infiltrate`, `plan`, `run` and `finish` are
+Claude workflows.
 
 ## Configuration
 
-Use `dev-autotask.config.json` for this workflow. There is no separate init command:
-`/dev-autotask:plan` resolves the config and helps create it when missing. Adapt
-[the example](examples/task.config.json) and use the repository's actual verification
-commands; the example commands are placeholders, not inferred project requirements.
-The complete contract is in [the config schema](schema/task.config.schema.json).
+`dev-autotask.config.json` is found from the current directory upward, then at
+`~/.claude/dev-autotask.config.json`. `plan` creates it if missing. Copy
+[the example](examples/task.config.json); fields are in
+[the schema](schema/task.config.schema.json). `repo.verify` needs at least one command;
+`repo.install` (optional) runs before them on every verification.
+`node scripts/verify.mjs <dir>` runs these with a per-command timeout and a minimal
+environment: `CI=1` plus `PATH`, `HOME`, locale, temp and package-manager cache
+variables only. Tokens in your shell are not passed through; commands that need
+credentials must get them from files under `HOME` (for example `~/.npmrc`), or list the
+variable names in `repo.env` (e.g. `["DATABASE_URL", "NPM_TOKEN"]`) to pass them through.
 
-The config selects one repository through `repo.path`, `repo.remote` and
-`repo.baseBranch`. `repo.verify` must contain at least one non-interactive command.
-Optional `install`, `lockfile`, `prepare`, `commandTimeoutSeconds` and `forbidden`
-fields describe its setup, execution deadlines and hard rules. JSON Schema defaults
-are documentation until explicitly applied by the runtime.
-
-The default runtime root is `~/.claude/dev-autotask`. `worktreeRoot` may be an absolute
-path or start with `~/`, and must resolve outside the main checkout. The workflow
-retains a task's state and worktree separately:
+Task state lives under `worktreeRoot` (default `~/.claude/dev-autotask`):
 
 ```text
-<worktreeRoot>/tasks/<owner>/<repository>/<task-id>/task.json
-<worktreeRoot>/tasks/<owner>/<repository>/<task-id>/plan.md
-<worktreeRoot>/worktrees/<owner>/<repository>/<task-id>/
+<root>/tasks/<owner>/<repo>/<id>/task.json   id, title, repo, baseBranch, branch, worktree, pr, progress
+<root>/tasks/<owner>/<repo>/<id>/plan.md
+<root>/worktrees/<owner>/<repo>/<id>/        the task worktree
+<root>/audits/<owner>/<repo>/<audit-id>/     infiltrate notes, findings.json, report.md
 ```
 
-`<owner>/<repository>` is the configured `repo.remote`. Task IDs, repository identity,
-branch/PR identity and the approved plan are checked when resuming. Keep these records
-between sessions; they carry review and validation evidence as well as progress.
-
-## Worktrees and validation
-
-Implementation runs in the task's managed worktree. The workflow checks ownership and
-repository identity before local work and preserves unfinished changes on interruption.
-It does not clear an unrelated dirty checkout to make progress. Resolve a reported
-ownership or recovery blocker before resuming that task.
-
-Verification uses configured setup and checks plus the plan's acceptance tests. Each
-command has a deadline, defaulting to 600 seconds, and timeout cleanup stops its process
-group. The local helpers require Node.js 20+, Git with `merge-tree --write-tree`, and a
-POSIX shell/process groups (macOS or Linux). GitHub operations use the connected tools
-or an authenticated `gh` CLI. Missing setup, failed checks and unresolved findings remain visible blockers.
-Review the current PR head, then verify integration with the current base before a
-requested merge. Repository rules, signing requirements and configured `forbidden`
-rules apply throughout.
-
-## Scope
-
-This version supports one repository, one task branch and one PR per task. Tasks can
-span many files and include multiple implementation milestones. Cross-repository
-delivery, milestone PR stacks, production deployment and production migrations need
-their own explicit scope; completing or merging a task does not authorize those actions.
+Production deployments and migrations are out of scope; merging a task does not authorize
+them.

@@ -1,57 +1,46 @@
 ---
 name: run
-description: Implement one approved large-task plan in its dedicated worktree, verify it, open or update its single draft PR, and review automatically. Resume unfinished work without resetting it. Never merge.
+description: Implement an approved dev-autotask plan in its own worktree, verify it, push, and open one draft PR. Resumes an interrupted task. Stops for review; never merges.
 disable-model-invocation: true
 argument-hint: "<task-id>"
 ---
 
-# Implement and review the approved task
+# Implement the planned task
 
-Read the [shared workflow](../../references/workflow.md). This invocation authorizes
-the approved task's branch/worktree, source changes, commits, push to that branch,
-one draft PR, and the review phase. It never authorizes pushing to the base branch,
-force-pushing, production writes/deployments, or merging.
+`<plugin>` is this plugin's root, two directories above this skill; `<state>` is
+`node <plugin>/scripts/state.mjs`. Invoking this skill approves the current `plan.md`.
+It authorizes the task worktree and branch, commits, pushing that branch, and one draft
+PR. Never push to the base branch, never force-push, never merge.
 
-1. Resolve config/task, acquire the lock, and read the original request, plan and
-   checkpoints. Confirm that the user approved the proposed plan in this conversation.
-   A direct `run` invocation after the unchanged plan was presented is approval to
-   implement it; an implicit skill selection is not. If approval is absent or a
-   material plan change is needed, present the concrete plan/change and wait. Call
-   `approve-plan` with its exact saved hash only after approval, then `start`. On
-   resume, an existing matching approval remains valid: skip `approve-plan` and
-   do not ask again. If already cleanly reviewed at the same head with no new work
-   requested, report readiness instead of restarting implementation.
-2. Create the task worktree/branch from its recorded base only if both are absent and
-   no task PR exists. Otherwise verify identity and resume the saved branch. Inspect
-   dirty task work and checkpoints; retain it. Check GitHub for the saved PR or an
-   existing same-repository PR with the exact task branch/base before publishing, so
-   interruption cannot cause a duplicate. Closed unmerged PRs need reconciliation.
-3. Execute the plan's milestones. Read the relevant code rather than treating the
-   plan as infallible. Follow repository conventions, signing requirements and hard
-   rules. Add meaningful tests for changed behavior and acceptance criteria. Keep one
-   writer in the worktree; delegated research/review must not race source edits.
-   Checkpoint completed milestones, decisions, test results and next actions. A
-   blocked milestone leaves the task resumable; do not substitute an unrelated task.
-4. Inspect setup/test commands before running them. Configure any additional required
-   acceptance checks explicitly in `repo.verify` or run and document them separately.
-   Review the complete diff for scope, secrets, accidental generated/build output and
-   changes to test/security/deployment configuration. These files are permitted when
-   justified by the approved task; do not inherit dev-autofix's size/path restrictions.
-   Stage intended files explicitly and commit to the task branch with repository
-   signing rules. Run `verify` at that exact committed head; do not publish on failure.
-5. Recheck the full cumulative diff and remote branch identity. Push only the task
-   branch, without force. Use a short concrete title and a body that explains the
-   resulting behavior, acceptance evidence, validation limits and delivery steps.
-   Write the body to a file and pass `--body-file`. Create one draft PR against the
-   configured base, or update the existing task PR. If the write's outcome is unclear,
-   read GitHub before retrying. Re-read its same-repository head/base/state and bind
-   its number, canonical URL and exact head with `bind-pr`.
-6. Release the lock after all workers stop, then execute the instructions in
-   [review](../review/SKILL.md) for this task automatically. Pass the exact task ID
-   and saved evidence; do not assume a separate plugin installation or Claude-only
-   tool is required. Review independently from implementation claims. Do not wait
-   for another user instruction merely to begin the review.
-
-Report the task/PR, milestone and acceptance status, actual checks and limits, review
-outcome, and next action. Findings lead to `/dev-autotask:finish`; a clean review means
-ready for the user's merge decision. Preserve records/worktree on every exit.
+1. **Load.** `<state> show <id>` (use `<state> list` and ask if no ID was given) and
+   read `plan.md` from `<state> paths <id>`. If the plan has open questions, ask them
+   first. If `task.pr` is set and every milestone is done, report the PR and stop;
+   review findings are handled by `finish`.
+2. **Worktree.** If `task.worktree` exists, resume there: keep uncommitted work and
+   read `task.progress`. Otherwise run `git -C <repo.path> fetch origin` (allow at
+   least 120s), then `git -C <repo.path> worktree add -b <branch> <worktree>
+   origin/<baseBranch>`, or `git worktree add <worktree> <branch>` if the branch
+   already exists. Never switch or edit the main checkout.
+3. **Implement** the milestones in order inside the worktree. Follow the repository's
+   instructions, `repo.forbidden`, and its commit-signing rules. Add tests for the
+   acceptance criteria. Commit each milestone with explicit paths, then record it:
+   `<state> progress <id> "<what was done>"`.
+4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree>` runs the configured install
+   and verify commands; give it a long timeout (install plus every verify command can
+   take many minutes). Fix failures and re-run until it passes. Do not publish failing
+   work. Read the full diff against `origin/<baseBranch>` for scope, secrets and stray
+   generated files.
+5. **Publish.** If `plan.md` has a `Source: infiltrate` line, first run `gh repo view
+   <remote> --json visibility`; unless it is `PRIVATE` (or `INTERNAL`), stop and ask the
+   user before pushing, because the fix and its regression tests disclose the
+   vulnerability. Keep exploit detail out of the PR body and commit messages.
+   `git -C <worktree> push -u origin <branch>` (no force). If `task.pr` is
+   null, check `gh pr list --repo <remote> --head <branch> --state all` so a retry
+   never opens a second PR; if none exists, write the body to a file and run
+   `gh pr create --draft --repo <remote> --base <baseBranch> --head <branch> --title
+   <title> --body-file <file>`. The body summarizes the change and verification, then
+   includes `plan.md` inside `<details><summary>Plan</summary>...</details>` so the
+   reviewer has it. Record the number: `<state> pr <id> <number>`.
+6. **Stop.** Report the PR URL, milestones done and verification result. Tell the user
+   to review it in Codex with `$task-review <number>` (or `/dev-autotask:task-review <number>`),
+   then run `/dev-autotask:finish <id>`. Do not review it yourself.

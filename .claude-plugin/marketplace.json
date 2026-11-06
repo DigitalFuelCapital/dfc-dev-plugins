@@ -20,7 +20,7 @@
     {
       "name": "dev-autotask",
       "source": "./plugins/dev-autotask",
-      "description": "Staff dev tooling - complete one large task as one PR, with an approved plan, automatic implementation review, and merging only on explicit request",
+      "description": "Staff dev tooling - complete one large task as one PR (optionally from a local security audit): Claude plans and implements, Codex reviews, merge only on explicit request",
       "version": "1.0.0",
       "author": {
         "name": "Digital Fuel Capital"

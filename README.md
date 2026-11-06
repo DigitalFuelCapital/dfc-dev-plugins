@@ -6,7 +6,7 @@ installable from Codex). Private for now.
 | Plugin | What it does |
 |---|---|
 | [`dev-autofix`](plugins/dev-autofix/README.md) | Plan and run small, pre-verified fixes as signed draft PRs on leftover subscription budget, review the batch, then address findings or merge on approval. |
-| [`dev-autotask`](plugins/dev-autotask/README.md) | One large task through an approved plan, implementation, automatic review and findings resolution, all in one PR. Merges only on explicit request. |
+| [`dev-autotask`](plugins/dev-autotask/README.md) | One large task as one PR, optionally starting from a cross-verified local security audit (`infiltrate`): Claude plans, implements and addresses findings; Codex reviews (`$task-review`). Merges only on explicit request. |
 
 ## Install
 
