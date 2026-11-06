@@ -164,6 +164,17 @@ test('cancelling the verify CLI stops the running command\'s children and fails'
   assert.equal(fs.existsSync(path.join(f.main, 'late')), false);
 });
 
+test('cancelling the verify CLI never starts the next command', async t => {
+  const f = fixture(t, { verify: ["trap 'exit 0' TERM; touch started; sleep 30 & wait", 'touch next'] });
+  const helper = spawn('node', [path.join(scripts, 'verify.mjs'), f.main, f.file], { stdio: 'ignore' });
+  const exited = new Promise(resolve => helper.on('exit', code => resolve(code)));
+  while (!fs.existsSync(path.join(f.main, 'started'))) await new Promise(r => setTimeout(r, 50));
+  helper.kill('SIGTERM');
+  assert.notEqual(await exited, 0);
+  await new Promise(r => setTimeout(r, 1500));
+  assert.equal(fs.existsSync(path.join(f.main, 'next')), false);
+});
+
 test('verify CLI exits non-zero on failure', t => {
   const f = fixture(t, { verify: ['false'] });
   assert.throws(() => execFileSync('node', [path.join(scripts, 'verify.mjs'), f.main, f.file], { stdio: 'ignore' }));

@@ -31,9 +31,11 @@ async function stopGroup(pid) {
   return !groupAlive(pid);
 }
 const active = new Set(); // running command groups, for the CLI's signal handler
+let cancelled = false; // set by the CLI's signal handler; no command starts after it
 
 export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = commandEnv()) {
   return new Promise(resolve => {
+    if (cancelled) return resolve({ ok: false, cancelled });
     const child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio });
     if (child.pid) active.add(child.pid);
     let timedOut = false, killTimer;
@@ -53,13 +55,19 @@ export async function verify(config, dir, { stdio = 'inherit', log = console.err
   const commands = [config.repo.install, ...config.repo.verify].filter(Boolean);
   const results = [];
   for (const command of commands) {
+    if (cancelled) break;
     log(`[dev-autotask] $ ${command}`);
     const result = { command, ...await runCommand(command, dir, config.repo.commandTimeoutSeconds * 1000, stdio, commandEnv(process.env, config.repo.env)) };
     results.push(result);
+    if (cancelled) break;
     if (!result.ok) {
       log(`[dev-autotask] FAILED${result.timedOut ? ' (timed out)' : ''}: ${command}`);
       return { passed: false, results };
     }
+  }
+  if (cancelled) {
+    log('[dev-autotask] FAILED: cancelled');
+    return { passed: false, cancelled, results };
   }
   log('[dev-autotask] all checks passed');
   return { passed: true, results };
@@ -71,8 +79,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   // Signal listeners do not keep Node alive, so normal completion is unaffected.
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.once(name, async () => {
+      if (cancelled) return;
+      cancelled = true; // first, synchronously: verify() and runCommand() start nothing new
       console.error(`[dev-autotask] ${name}: stopping checks`);
-      await Promise.all([...active].map(stopGroup));
+      // Drain until empty; each group is taken once, so an unkillable one cannot spin this forever.
+      while (active.size) {
+        const pids = [...active];
+        pids.forEach(pid => active.delete(pid));
+        await Promise.all(pids.map(stopGroup));
+      }
       process.exit(1);
     });
   }
