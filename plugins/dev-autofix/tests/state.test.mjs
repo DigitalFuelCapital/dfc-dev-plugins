@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { acquireLock as acquireRuntimeLock, releaseLock, inspectLock, resumeLock as resumeRuntimeLock, breakLock, validateConfig, beginRun, readRun, finishRun, recordPR, checkApproval, checkWorktree, githubRemote, detectLockOwner, lockInitializationTime, processStart } from '../scripts/state.mjs';
+import { acquireLock as acquireRuntimeLock, releaseLock, inspectLock, resumeLock as resumeRuntimeLock, breakLock, validateConfig, recordPR, checkApproval, checkWorktree, githubRemote, detectLockOwner, lockInitializationTime, processStart } from '../scripts/state.mjs';
 
 const testOwner = () => ({ pid: process.pid, processStart: processStart(process.pid), executable: process.execPath });
 const acquireLock = (directory, identity = { session: 'test-session', command: 'test' }) => acquireRuntimeLock(directory, identity, testOwner);
@@ -194,167 +194,13 @@ test('recovered PR registration starts a batch, deduplicates retries, and preser
   assert.equal(recordPR(root, started, first, runToken).prs.length, 1);
   assert.equal(recordPR(root, started, second, runToken).prs.length, 2);
   assert.deepEqual(recordPR(root, '2026-09-27T12:00:00Z', first, runToken).prs, [first]);
+  // The replaced batch is archived, not lost.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'runs', '2026-09-26T12-00-00Z.json'))).prs.length, 2);
   assert.throws(() => recordPR(root, started, second, 'other-session'), /mismatch/);
   const file = path.join(root, 'last-run.json');
   fs.writeFileSync(file, '{interrupted');
   assert.throws(() => recordPR(root, started, first, runToken));
   assert.equal(fs.readFileSync(file, 'utf8'), '{interrupted');
-});
-
-test('starting an empty run replaces the visible old batch and retains both histories', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const firstPR = { repo: 'repo', number: 42, branch: 'fix/auto-first', url: 'https://github.com/owner/repo/pull/42' };
-  const first = recordPR(root, '2026-09-26T12:00:00Z', firstPR, runToken);
-  finishRun(root, first.runId, runToken, { status: 'complete', summary: 'One PR published' });
-  const empty = beginRun(root, '2026-09-27T12:00:00Z', runToken);
-  assert.notEqual(empty.runId, first.runId);
-  assert.equal(empty.status, 'running');
-  assert.deepEqual(empty.prs, []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'last-run.json'))), empty);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'runs', `${first.runId}.json`))).prs, [firstPR]);
-  const stopped = finishRun(root, empty.runId, runToken, { status: 'stopped', summary: 'Budget reserve reached', outcomes: [{ repo: 'repo', outcome: 'budget-blocked' }] });
-  assert.deepEqual(stopped.prs, []);
-  assert.equal(stopped.status, 'stopped');
-  assert.ok(Number.isFinite(Date.parse(stopped.finishedAt)));
-  assert.deepEqual(stopped.outcomes, [{ repo: 'repo', outcome: 'budget-blocked' }]);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'last-run.json'))), stopped);
-  assert.equal(fs.readdirSync(path.join(root, 'runs')).length, 2);
-});
-
-test('starting the same running timestamp resumes its PRs and registration updates its history', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const startedAt = '2026-09-26T12:00:00Z';
-  const run = beginRun(root, startedAt, runToken);
-  const entry = { repo: 'repo', number: 42, branch: 'fix/auto-one', url: 'https://github.com/owner/repo/pull/42' };
-  recordPR(root, startedAt, entry, runToken);
-  const resumed = beginRun(root, '2026-09-26T12:00:00.000Z', runToken);
-  assert.equal(resumed.runId, run.runId);
-  assert.deepEqual(resumed.prs, [entry]);
-  recordPR(root, startedAt, { ...entry, branch: 'fix/auto-renamed' }, runToken);
-  const history = JSON.parse(fs.readFileSync(path.join(root, 'runs', `${run.runId}.json`)));
-  assert.equal(history.prs.length, 1);
-  assert.equal(history.prs[0].branch, 'fix/auto-renamed');
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'last-run.json'))), history);
-  assert.equal(fs.readdirSync(path.join(root, 'runs')).length, 1);
-});
-
-test('a later run preserves unfinished history and rejects old registrations or finalization', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const oldTime = '2026-09-26T12:00:00Z', newTime = '2026-09-27T12:00:00Z';
-  const oldRun = beginRun(root, oldTime, runToken);
-  const current = beginRun(root, newTime, runToken);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'runs', `${oldRun.runId}.json`))).status, 'running');
-  const entry = { repo: 'repo', number: 42, branch: 'fix/auto-late', url: 'https://github.com/owner/repo/pull/42' };
-  assert.throws(() => recordPR(root, oldTime, entry, runToken), /precedes/);
-  assert.throws(() => beginRun(root, oldTime, runToken), /precedes/);
-  assert.throws(() => finishRun(root, oldRun.runId, runToken, { status: 'failed' }), /another run/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'last-run.json'))), current);
-});
-
-test('run lifecycle requires ownership and finalized runs cannot be silently reopened or rewritten', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const timestamp = '2026-09-26T12:00:00Z';
-  assert.throws(() => beginRun(root, timestamp, 'other-session'), /mismatch/);
-  const run = beginRun(root, timestamp, runToken);
-  assert.throws(() => finishRun(root, run.runId, 'other-session', { status: 'failed' }), /mismatch/);
-  assert.throws(() => finishRun(root, '../escape', runToken, { status: 'failed' }), /ID/);
-  assert.throws(() => finishRun(root, run.runId, runToken, { status: 'running' }), /Finish run/);
-  const result = finishRun(root, run.runId, runToken, { status: 'failed', summary: 'Signing unavailable' });
-  assert.deepEqual(finishRun(root, run.runId, runToken, { status: 'failed', summary: 'Signing unavailable' }), result);
-  assert.throws(() => finishRun(root, run.runId, runToken, { status: 'complete' }), /cannot be changed/);
-  assert.throws(() => beginRun(root, timestamp, runToken), /finalized/);
-  assert.throws(() => recordPR(root, timestamp, { repo: 'repo', number: 42, branch: 'fix/auto-one', url: 'https://github.com/owner/repo/pull/42' }, runToken), /finalized/);
-});
-
-test('legacy manifests are preserved when adopted into run histories', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const entry = { repo: 'repo', number: 42, branch: 'fix/auto-existing', url: 'https://github.com/owner/repo/pull/42' };
-  fs.writeFileSync(path.join(root, 'last-run.json'), JSON.stringify({ startedAt: '2026-09-26T12:00:00Z', prs: [entry] }));
-  const adopted = beginRun(root, '2026-09-26T12:00:00Z', runToken);
-  assert.equal(adopted.legacy, true);
-  assert.deepEqual(adopted.prs, [entry]);
-  const empty = beginRun(root, '2026-09-27T12:00:00Z', runToken);
-  assert.deepEqual(empty.prs, []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'runs', `${adopted.runId}.json`))).prs, [entry]);
-});
-
-test('interrupted snapshot writes recover from newer durable history, while conflicting state is preserved', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const timestamp = '2026-09-26T12:00:00Z';
-  const original = beginRun(root, timestamp, runToken);
-  const entry = { repo: 'repo', number: 42, branch: 'fix/auto-written', url: 'https://github.com/owner/repo/pull/42' };
-  const historyPath = path.join(root, 'runs', `${original.runId}.json`), snapshotPath = path.join(root, 'last-run.json');
-  const durable = { ...original, revision: original.revision + 1, prs: [entry] };
-  fs.writeFileSync(historyPath, JSON.stringify(durable));
-  assert.deepEqual(beginRun(root, timestamp, runToken), durable);
-  assert.deepEqual(JSON.parse(fs.readFileSync(snapshotPath)), durable);
-  const conflicting = { ...durable, prs: [] };
-  fs.writeFileSync(snapshotPath, JSON.stringify(conflicting));
-  assert.throws(() => beginRun(root, '2026-09-27T12:00:00Z', runToken), /same revision/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(snapshotPath)), conflicting);
-  assert.deepEqual(JSON.parse(fs.readFileSync(historyPath)), durable);
-  fs.writeFileSync(snapshotPath, '{broken');
-  assert.throws(() => beginRun(root, '2026-09-27T12:00:00Z', runToken));
-  assert.equal(fs.readFileSync(snapshotPath, 'utf8'), '{broken');
-});
-
-test('run history rejects corrupt identities and symlinked history directories before replacing state', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const outside = path.join(root, 'outside'); fs.mkdirSync(outside);
-  fs.symlinkSync(outside, path.join(root, 'runs'));
-  assert.throws(() => beginRun(root, '2026-09-26T12:00:00Z', runToken), /symlink/);
-  assert.equal(fs.existsSync(path.join(root, 'last-run.json')), false);
-  assert.deepEqual(fs.readdirSync(outside), []);
-  fs.unlinkSync(path.join(root, 'runs'));
-  const run = beginRun(root, '2026-09-26T12:00:00Z', runToken);
-  const history = path.join(root, 'runs', `${run.runId}.json`);
-  fs.writeFileSync(history, JSON.stringify({ ...run, runId: 'invalid' }));
-  assert.throws(() => finishRun(root, run.runId, runToken, { status: 'failed' }), /identity/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'last-run.json'))), run);
-});
-
-test('run reads select explicit histories without switching the visible batch or changing legacy state', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  assert.throws(() => readRun(root), /No run manifest/);
-  const legacy = { startedAt: '2026-09-26T12:00:00Z', prs: [] };
-  const snapshot = path.join(root, 'last-run.json');
-  const original = JSON.stringify(legacy);
-  fs.writeFileSync(snapshot, original);
-  assert.deepEqual(readRun(root), legacy);
-  assert.equal(fs.readFileSync(snapshot, 'utf8'), original);
-  assert.equal(fs.existsSync(path.join(root, 'runs')), false);
-  const previous = beginRun(root, legacy.startedAt, runToken);
-  const current = beginRun(root, '2026-09-27T12:00:00Z', runToken);
-  assert.deepEqual(readRun(root, previous.runId), previous);
-  assert.deepEqual(readRun(root), current);
-  assert.deepEqual(JSON.parse(fs.readFileSync(snapshot)), current);
-  assert.throws(() => readRun(root, '../escape'), /run ID/);
-  fs.writeFileSync(snapshot, '{broken');
-  assert.throws(() => readRun(root));
-  assert.deepEqual(readRun(root, previous.runId), previous);
-  assert.equal(fs.readFileSync(snapshot, 'utf8'), '{broken');
-  fs.writeFileSync(path.join(root, 'runs', `${previous.runId}.json`), JSON.stringify({ ...previous, runId: current.runId }));
-  assert.throws(() => readRun(root, previous.runId), /identity mismatch/);
-});
-
-test('run readers and writers preserve symlinked snapshots and histories instead of following them', t => {
-  const root = temp(t), runToken = acquireLock(path.join(root, '.locks/run'));
-  const outside = path.join(root, 'outside.json'), snapshot = path.join(root, 'last-run.json');
-  const contents = JSON.stringify({ startedAt: '2026-09-26T12:00:00Z', prs: [] });
-  fs.writeFileSync(outside, contents);
-  fs.symlinkSync(outside, snapshot);
-  assert.throws(() => readRun(root), /symlink/);
-  assert.throws(() => beginRun(root, '2026-09-27T12:00:00Z', runToken), /symlink/);
-  assert.equal(fs.readlinkSync(snapshot), outside);
-  assert.equal(fs.readFileSync(outside, 'utf8'), contents);
-  fs.unlinkSync(snapshot);
-  const run = beginRun(root, '2026-09-27T12:00:00Z', runToken);
-  const history = path.join(root, 'runs', `${run.runId}.json`);
-  fs.unlinkSync(history); fs.symlinkSync(outside, history);
-  assert.throws(() => readRun(root, run.runId), /symlink/);
-  assert.throws(() => finishRun(root, run.runId, runToken, { status: 'failed' }), /symlink/);
-  assert.equal(fs.readlinkSync(history), outside);
-  assert.equal(fs.readFileSync(outside, 'utf8'), contents);
 });
 
 test('worktree guard blocks dirty, busy, unretained, foreign and escaped work without changing files', t => {

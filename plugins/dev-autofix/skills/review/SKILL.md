@@ -7,7 +7,7 @@ disable-model-invocation: true
 # Review the autofix PR batch
 
 Invoke as `$review` in Codex or `/dev-autofix:review` in Claude Code. Accept optional
-repo names, `run=UUID`, `pr=N` (repeatable), and `review-only`. By default, process **every PR in
+repo names, `pr=N` (repeatable), and `review-only`. By default, process **every PR in
 the last run**, one repo at a time in config order, ascending PR number within each
 repo. Complete the whole pass without asking to move to the next PR. Findings, closed
 PRs, and individual validation failures do not end the pass.
@@ -50,17 +50,11 @@ before local validation; missing verification blocks readiness, but other PRs ma
 be inspected remotely. Use its repo ownership lock and worktree check for local work,
 and its immutable approval record format when publishing `LGTM`.
 
-Unless explicit `pr=N` replaces discovery, use
-`state.mjs read-run <worktreeRoot> [run-id]` to read the latest batch, or the
-explicit `run=UUID` history, once and retain the snapshot for this pass. Omit the
-optional argument for latest. Do not combine `run=UUID` and `pr=N`; report the
-ambiguous selection before acting. Legacy manifests remain readable. Example:
+Read `<worktreeRoot>/last-run.json` once and retain the snapshot for this pass:
 
 ```json
 {
-  "runId": "00000000-0000-4000-8000-000000000001",
   "startedAt": "2026-09-26T12:00:00Z",
-  "status": "complete",
   "prs": [
     {"repo": "dfc-tools", "number": 42, "branch": "fix/auto-20260926-example", "url": "https://github.com/DigitalFuelCapital/dfc-tools/pull/42"}
   ]
@@ -71,9 +65,7 @@ Match `repo` to a unique configured name, deduplicate by `(remote, number)`, and
 repo filters. Reject malformed entries or unknown repos with a reported reason. Do not
 search all open PRs or silently fall back to a different batch. A missing/invalid
 manifest blocks default discovery; an empty manifest/filter result is a completed empty
-pass. New zero-PR runs explicitly select an empty batch. Report `runId`, `startedAt`
-and status; an interrupted `running` receipt is not a completed run. Never silently
-substitute the previous run for an empty, stopped or failed batch.
+pass. A run that opened no PRs retains the previous manifest, so report `startedAt`.
 
 Explicit `pr=N` arguments replace manifest selection and can review earlier runs.
 Resolve each number to a configured repo in scope; ask only if ambiguous. Continue
@@ -82,13 +74,8 @@ Require an explicit PR to use the configured `branchPrefix` followed by `-` (def
 `fix/auto-`), and require a manifest PR's head branch to match its recorded `branch`.
 Never follow a manifest URL to a different repository.
 
-Resolve the actual publishing-tool author and finish's effective `reviewers`.
-When config omits reviewers, finish defaults to the authenticated **gh** login from
-`gh api user --jq .login`, even when review publishes through a connector. Resolve
-both identities; do not substitute the connector author for finish's default.
-If gh/default identity cannot be established or the actual author is not a reviewer,
-finish cannot consume those comments: complete the reviews in chat and report the
-mismatch without changing config.
+If the identity that will post isn't in `reviewers` (default: the `gh api user` login),
+review in chat only and report the mismatch.
 Resolve `approveTokens` (default `LGTM`, `/merge`). This skill's clean comment is always
 `LGTM`; if the configured tokens exclude it, report clean results in chat and explain
 the mismatch rather than posting a comment that finish would treat as concerns.
@@ -126,53 +113,29 @@ discussion through `gh api --paginate` for `repos/<remote>/issues/<n>/comments`,
   scenario, impact, evidence, and precise commit-pinned file/line links. Verify uncertain
   API behavior with current primary documentation or an isolated reproduction.
 
-## 3. Reuse run worktrees when local validation helps
+## 3. Validate locally with the helper
 
-The existing worktree is `<worktreeRoot>/<repo.name>`, shared by all that repo's PRs.
-Do not copy run/finish's reset, clean, sync, or cleanup commands. Review the unchanged
-PR head; merging the base would test a different commit.
+Local checks reuse `<worktreeRoot>/<repo.name>` at the unchanged PR head; never merge the
+base into it or copy run/finish's reset, clean, sync or cleanup commands. First inspect
+`repo.install`, `repo.prepare` and `repo.verify` against repository rules and
+`forbidden`: never run fix-mode commands, migrations, deployments, production writes or
+checks needing production secrets.
 
-Before using it, resolve real paths, require it to be outside every configured main
-checkout and inside `worktreeRoot`, confirm it appears in `git worktree list --porcelain`
-for `repo.path`, and confirm the origin identifies `repo.remote`. Reject a main checkout,
-unregistered path, symlink escaping the root, or another repository's worktree.
-
-Acquire `<worktreeRoot>/.locks/repo-<repo.name>` using the shared helper, then run its
-worktree check before each checkout. Keep the lock through verification and restoration.
-If locked or the helper fails, use remote review for that repo; never bypass the guard.
-Release only this invocation's lock in a finally step after restoration is attempted.
-
-Do not share it with an active run/finish/review session. Record original branch (or
-detached state), commit, and full index/worktree status including untracked files.
-Require a clean worktree and no merge, rebase, cherry-pick, or revert in progress. If
-dirty, busy, missing, or identity cannot be verified, leave it alone and review remotely;
-do not ask to clear it, create another worktree, or block the rest of the batch.
-
-For an eligible worktree, inspect install/prepare/verify commands and repository rules
-first. Do not run fix-mode commands, migrations, deployments, production writes or checks
-requiring production secrets. Save JSON input `{number,headSha,baseSha}` from the reviewed
-PR snapshot, then use the executable helper rather than manually implementing checkout,
-command execution and restoration:
+Acquire `<worktreeRoot>/.locks/repo-<repo.name>` with the shared helper, write
+`{number,headSha,baseSha}` from the reviewed snapshot to a file under `review/scratch/`,
+then run:
 
 ```bash
 node <plugin>/scripts/review.mjs verify <config-file> <repo.name> <repoToken> <input-file>
 ```
 
-The helper checks PR/origin/worktree identity, fetches retaining refs, checks out the
-exact unchanged head, refreshes dependencies, runs configured prepare/verify commands
-with deadlines and child-process cleanup, and attempts safe restoration in finally.
-It records actual commands, exits, logs, head/base, configuration and restoration in
-`review/records/validation/`. Keep the returned receipt ID/path in this PR's round record.
-Private `refs/autofix/review/` refs retain reviewed commits; nothing is pushed.
-
-Only `status: passed` with successful restoration proves these local checks completed.
-A failed check, interruption, dirty output or moved original branch preserves evidence
-and blocks dependent approval. Never discard artifacts to restore. If restoration fails
-or the worktree is dirty, disable further local use for this repo and continue remotely.
-When helper tooling is unavailable, use remote review rather than bypassing its guards.
-Save additional isolated reproductions under `review/scratch/`; identify them separately
-from the helper's configured checks. For a different dependency layout, use the repo's
-documented setup/config rather than assuming npm succeeded.
+It runs install plus the full prepare/verify suite, so give it a long command timeout (or
+none). It checks worktree, origin and PR identity, detaches at the exact head, runs the
+commands with deadlines, and restores the original checkout. Only `status: passed`
+counts as local evidence; keep its receipt path in this PR's record. If the lock is busy,
+the helper fails, or restoration fails (the receipt says so; never discard its
+artifacts), review remotely and stop local use for that repo. Release the lock in a
+finally step. Save any extra reproductions under `review/scratch/`, labelled separately.
 
 Remote review remains useful when local checks are unavailable. Decide whether that
 limit materially blocks readiness. Do not approve if necessary validation is incomplete,
@@ -185,12 +148,6 @@ Immediately before publishing, re-read PR state, head/base SHAs, checks, and all
 If closed/merged, skip posting. If head or base changed, inspect the delta and revalidate
 affected conclusions once. If it changes again, publish only a qualified report of the
 exact reviewed SHAs and unreviewed delta, never `LGTM`, then advance.
-
-If relying on a local validation receipt for approval, re-run
-`review.mjs check <config-file> <repo.name> <repoToken> <input-file> <receipt-id>` under
-the repo lock before posting. It rejects changed head/base/configuration, failed
-restoration and altered log evidence. Refresh validation when needed; a model-written
-`passed` flag or old chat summary does not replace an executed receipt.
 
 Avoid duplicate reviews for the same head **and review outcome/discussion state**.
 Compare prior records with actual GitHub comments, including a newer finish reply or
@@ -245,7 +202,7 @@ invocation re-reviews the same batch after finish addresses findings.
 
 ## 5. Report the whole pass
 
-Return the run ID/time/status (or explicit selection), counts, and one row per selected
+Return the manifest run time (or explicit selection), counts, and one row per selected
 PR: link, reviewed head, outcome (`LGTM posted`, `findings posted`, `reviewed in chat`,
 `already reviewed`, `closed/merged`, `blocked`, or `unreviewed`), checks/limits, and
 comment URL where posted. Include worktree restoration problems and saved unpublished

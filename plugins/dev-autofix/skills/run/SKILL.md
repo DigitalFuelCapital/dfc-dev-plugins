@@ -36,34 +36,10 @@ check. Require nonempty verification commands; acquire the run lock before recov
 publication and each repo lock before worktree use. Release owned locks in a finally
 step after workers stop. A busy repo is skipped, never reset.
 
-For a real run, persist one ISO `startedAt` and immediately call
-`state.mjs start-run <worktreeRoot> <startedAt> <runToken>` after acquiring the run
-lock. Retain the returned `runId`. This creates an empty current batch before preflight,
-budget gates or workers; a blocked/empty invocation cannot select the previous batch.
-After compaction, resume with the same timestamp/token rather than create another run.
-`dry-run` does not start/finalize a run or replace the current manifest.
-
-Before installing dependencies or launching workers, run:
-
-```bash
-node <plugin>/scripts/preflight.mjs <config-file> [repo-name ...]
-```
-
-Pass the selected configured repo names, not the literal brackets. It checks actual
-`gh` identity, origin/base access, repository write permission, and a signed disposable
-commit with trusted local verification. It changes no repository refs, index, working
-files or signing settings and pushes nothing. Report failed checks and stop dependent
-work before spending worker budget. Reviewer mismatch is a warning: a bot may publish
-fixes for a human reviewer. Review-comment publishing still requires its own identity
-check. A locally trusted signature does not guarantee GitHub will mark it verified;
-report the helper's limitations. `dry-run` skips delivery preflight.
-
-In a finally step, after workers stop and before releasing the run lock, write a result
-JSON with `status` (`complete`, `stopped`, or `failed`), summary and optional per-entry
-`outcomes`, then call `state.mjs finish-run <worktreeRoot> <runId> <runToken> <result-file>`.
-Budget/preflight stops, an empty queue and worker failures still finalize their run.
-If finalization fails, preserve/report the running receipt and error; never claim the
-run completed or overwrite its record by hand.
+Unless `dry-run`, run [delivery preflight](../../references/workflow-state.md#delivery-preflight)
+for the selected repos before installing dependencies or launching workers:
+`node <plugin>/scripts/preflight.mjs <config-file> <repo-name ...>`. On `ok: false`, report
+the failed checks and stop before spending worker budget. Relay any `warnings`.
 
 Stop if `worktreeRoot` resolves to a path inside any `repo.path`. A worktree nested in a
 checkout gets picked up by that checkout's typecheck, lint and test globs.
@@ -272,10 +248,9 @@ because a payload added in one commit and removed in the next is still published
 5. **Clean.** No uncommitted or untracked files.
 
 **Run manifest.** `/dev-autofix:review` and `/dev-autofix:finish` act on exactly the PRs
-the selected run registered. `<worktreeRoot>/runs/<runId>.json` retains every run;
-`last-run.json` is the current snapshot, including runs with no PRs. Registration upserts
-into that run's history and snapshot. Review/finish default to the latest run, or accept
-`run=<runId>` for an earlier batch and `pr=N` for individual PRs. Never hand-edit records.
+the last run registered. The first registration of a run replaces `last-run.json`; later
+ones upsert into the same batch; a run with no registrations leaves the previous manifest
+in place. Never hand-edit or truncate it.
 
 Never push to `baseBranch`, never force-push, never merge.
 
@@ -287,8 +262,7 @@ Several in one run means the queue needs re-planning.
 
 ## 6. Report
 
-A table: PR, repo, one-line summary, verification run. Include run ID, final status and
-history path, explicitly reporting zero-PR runs. Then one line with budget before and
+A table: PR, repo, one-line summary, verification run. Then one line with budget before and
 after (`wk 61% -> 84%`, `5h 12% -> 58%`), the number of fixes landed, and how many `ready`
 entries remain per repo. List any branch the push gate refused, with the failing check and
 its local path.

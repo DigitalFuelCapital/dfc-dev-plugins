@@ -168,121 +168,25 @@ export function validateConfig(config) {
   return config;
 }
 
-const runIdOK = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
-const runTimestamp = value => {
-  requireValue(nonempty(value) && Number.isFinite(Date.parse(value)), 'Invalid run timestamp');
-  return new Date(value).toISOString();
-};
-function validatePREntry(entry) {
-  requireValue(entry && typeof entry === 'object', 'Invalid PR identity');
+export function recordPR(root, startedAt, entry, runToken) {
+  requireLock(path.join(root, '.locks', 'run'), runToken);
+  requireValue(nonempty(startedAt) && Number.isFinite(Date.parse(startedAt)), 'Invalid run timestamp');
   requireValue(nameOK(entry.repo) && Number.isSafeInteger(entry.number) && entry.number > 0 && nonempty(entry.branch), 'Invalid PR identity');
   requireValue(typeof entry.url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(entry.url), 'Invalid PR URL');
   requireValue(Number(entry.url.split('/').at(-1)) === entry.number, 'PR URL/number mismatch');
-}
-function validateRun(manifest) {
-  requireValue(manifest && nonempty(manifest.startedAt) && Number.isFinite(Date.parse(manifest.startedAt)) && Array.isArray(manifest.prs), 'Invalid existing manifest; preserve it for recovery');
-  for (const entry of manifest.prs) validatePREntry(entry);
-  if (manifest.runId !== undefined) {
-    requireValue(manifest.version === 1 && runIdOK(manifest.runId) && Number.isSafeInteger(manifest.revision) && manifest.revision >= 0, 'Invalid run history identity or revision');
-    requireValue(['running', 'complete', 'stopped', 'failed'].includes(manifest.status) && Array.isArray(manifest.outcomes), 'Invalid run history status or outcomes');
-    if (manifest.status !== 'running') requireValue(nonempty(manifest.finishedAt) && Number.isFinite(Date.parse(manifest.finishedAt)), 'Finalized run needs a completion time');
-  }
-  return manifest;
-}
-function runFile(root, runId) {
-  requireValue(runIdOK(runId), 'Invalid run ID');
-  const directory = path.join(canonical(root), 'runs');
-  requireValue(canonical(directory) === directory, 'Run history directory must not be a symlink');
-  const file = path.join(directory, `${runId}.json`);
-  try {
-    const stat = fs.lstatSync(file);
-    requireValue(stat.isFile() && !stat.isSymbolicLink(), 'Run history must be a regular file, not a symlink');
-  } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  return file;
-}
-function currentRun(root) {
+  // The run-lock owner serializes registrations; workers never write the manifest.
   const file = path.join(root, 'last-run.json');
-  try {
-    const stat = fs.lstatSync(file);
-    requireValue(stat.isFile() && !stat.isSymbolicLink(), 'Run snapshot must be a regular file, not a symlink');
-  } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-  const snapshot = validateRun(read(file));
-  if (snapshot.runId === undefined) return snapshot;
-  const history = validateRun(read(runFile(root, snapshot.runId)));
-  requireValue(history.runId === snapshot.runId && runTimestamp(history.startedAt) === runTimestamp(snapshot.startedAt), 'Run snapshot/history identity mismatch; preserve both files');
-  requireValue(history.revision >= snapshot.revision, 'Run snapshot is newer than its history; preserve both files');
-  // History is committed first. A failed snapshot write can leave an older revision;
-  // the next owned write repairs it from this authoritative history, never the reverse.
-  requireValue(history.revision !== snapshot.revision || isDeepStrictEqual(history, snapshot), 'Run snapshot/history differ at the same revision; preserve both files');
-  return history;
-}
-function persistRun(root, manifest, { exclusive = false } = {}) {
-  validateRun(manifest);
-  writeAtomic(runFile(root, manifest.runId), manifest, { exclusive });
-  writeAtomic(path.join(root, 'last-run.json'), manifest);
-  return manifest;
-}
-function promoteLegacyRun(root, manifest) {
-  return persistRun(root, { ...manifest, version: 1, runId: randomUUID(), startedAt: runTimestamp(manifest.startedAt), status: 'running', revision: 0, outcomes: [], legacy: true }, { exclusive: true });
-}
-
-export function readRun(root, runId) {
-  if (runId === undefined) {
-    const current = currentRun(root);
-    requireValue(current, 'No run manifest exists');
-    return current;
-  }
-  const history = validateRun(read(runFile(root, runId)));
-  requireValue(history.runId === runId, 'Requested run/history identity mismatch');
-  return history;
-}
-
-// Start before budget/preflight gates so even a run opening no PRs owns an empty batch.
-// The run lock serializes history and snapshot updates; workers never write either.
-export function beginRun(root, startedAt, runToken) {
-  requireLock(path.join(root, '.locks', 'run'), runToken);
-  const timestamp = runTimestamp(startedAt);
-  let previous = currentRun(root);
-  if (previous) {
-    const prior = runTimestamp(previous.startedAt);
-    requireValue(Date.parse(timestamp) >= Date.parse(prior), 'Run timestamp precedes the current run; late registrations cannot replace its batch');
-    if (previous.runId === undefined) previous = promoteLegacyRun(root, previous);
-    if (timestamp === prior) {
-      requireValue(previous.status === 'running', 'Run is already finalized; start a new run instead of reopening it');
-      // Idempotent after compaction, including repair after an interrupted snapshot write.
-      writeAtomic(path.join(root, 'last-run.json'), previous);
-      return previous;
-    }
-  }
-  return persistRun(root, { version: 1, runId: randomUUID(), startedAt: timestamp, status: 'running', revision: 0, prs: [], outcomes: [] }, { exclusive: true });
-}
-
-export function finishRun(root, runId, runToken, input) {
-  requireLock(path.join(root, '.locks', 'run'), runToken);
-  requireValue(runIdOK(runId) && input && ['complete', 'stopped', 'failed'].includes(input.status), 'Finish run needs its ID and complete, stopped or failed status');
-  requireValue(input.summary === undefined || typeof input.summary === 'string', 'Run summary must be text');
-  requireValue(input.outcomes === undefined || Array.isArray(input.outcomes), 'Run outcomes must be an array');
-  const current = currentRun(root);
-  requireValue(current?.runId === runId, 'Cannot finalize another run or replace the current batch');
-  if (current.status !== 'running') {
-    requireValue(current.status === input.status && (input.summary === undefined || current.summary === input.summary) && (input.outcomes === undefined || isDeepStrictEqual(current.outcomes, input.outcomes)), 'Finalized run cannot be changed');
-    writeAtomic(path.join(root, 'last-run.json'), current);
-    return current;
-  }
-  return persistRun(root, { ...current, status: input.status, finishedAt: new Date().toISOString(), revision: current.revision + 1, ...(input.summary === undefined ? {} : { summary: input.summary }), outcomes: input.outcomes ?? current.outcomes });
-}
-
-export function recordPR(root, startedAt, entry, runToken) {
-  requireLock(path.join(root, '.locks', 'run'), runToken);
-  validatePREntry(entry);
-  // Legacy callers that register their first PR implicitly still gain a durable run.
-  // beginRun refuses older timestamps and never clears the same running batch.
-  const manifest = beginRun(root, startedAt, runToken);
+  const previous = fs.existsSync(file) ? read(file) : null;
+  requireValue(previous === null || (nonempty(previous.startedAt) && Array.isArray(previous.prs)), 'Invalid existing manifest; preserve it for recovery');
+  const manifest = previous?.startedAt === startedAt ? previous : { startedAt, prs: [] };
+  // Only the first registration rolls the batch, so a run that stops early leaves the previous
+  // batch reviewable. The replaced batch is kept as plain history.
+  if (previous && manifest !== previous) writeAtomic(path.join(root, 'runs', `${previous.startedAt.replace(/[^\w.-]/g, '-')}.json`), previous);
   const index = manifest.prs.findIndex(pr => pr.repo === entry.repo && pr.number === entry.number);
   if (index < 0) manifest.prs.push(entry);
   else manifest.prs[index] = entry;
-  manifest.revision += 1;
-  return persistRun(root, manifest);
+  writeAtomic(file, manifest);
+  return manifest;
 }
 
 export function validateApprovalRecord(record) {
@@ -460,9 +364,6 @@ function main([command, ...args]) {
     case 'quarantine': return quarantineWorktree(read(args[0]), args[1], args[2], read(args[3]));
     case 'list-recovery': return listRecovery(read(args[0]));
     case 'record-pr': return recordPR(args[0], args[1], read(args[2]), args[3]);
-    case 'start-run': return beginRun(args[0], args[1], args[2]);
-    case 'read-run': return readRun(args[0], args[1]);
-    case 'finish-run': return finishRun(args[0], args[1], args[2], read(args[3]));
     case 'record-approval': {
       const record = validateApprovalRecord(read(args[1]));
       if (fs.existsSync(args[0])) requireValue(isDeepStrictEqual(validateApprovalRecord(read(args[0])), record), 'Approval record already exists with different evidence');
@@ -470,7 +371,7 @@ function main([command, ...args]) {
       return 'Approval recorded';
     }
     case 'approval': return { approvedHead: checkApproval(read(args[0])) };
-    default: throw new Error('Usage: state.mjs config|lock|inspect-lock|resume-lock|break-lock|unlock|worktree|quarantine|list-recovery|start-run|read-run|finish-run|record-pr|record-approval|approval <arguments>');
+    default: throw new Error('Usage: state.mjs config|lock|inspect-lock|resume-lock|break-lock|unlock|worktree|quarantine|list-recovery|record-pr|record-approval|approval <arguments>');
   }
 }
 

@@ -65,22 +65,6 @@ See [OpenAI's plugin compatibility documentation](https://developers.openai.com/
 
 ## Quickstart
 
-Version 3.3 adds delivery preflight, executable local review validation and retained
-run histories. Existing queue/budget rules and `LGTM` merge-approval behavior continue.
-
-- Run checks signing, actual `gh` identity and repository access before workers start.
-  A disposable trusted local signature still cannot guarantee GitHub's verified-key
-  policy will accept the eventual published commit.
-- Local review uses `scripts/review.mjs` for bounded commands, exact-head receipts and
-  safe branch restoration. Failed restoration preserves work and blocks approval.
-- Every real run gets a UUID and `<worktreeRoot>/runs/<UUID>.json`, including empty,
-  stopped and failed runs. Review/finish default to that current batch. Use
-  `run=<UUID>` for an older batch or `pr=N` for individual PRs; do not combine them.
-  Dry-run does not replace the current batch.
-
-The helper commands and recovery contracts are in
-[shared workflow state](references/workflow-state.md).
-
 ```
 /dev-autofix:init          # detect repos, write autofix.config.json, check budget wiring
 /dev-autofix:plan          # fill the backlog with verified fix plans - review it
@@ -235,10 +219,9 @@ written out.
 ## State checks and recovery
 
 [scripts/state.mjs](scripts/state.mjs) handles ownership, worktree checks, PR registration,
-durable run histories, recovery and approval evidence.
-[scripts/preflight.mjs](scripts/preflight.mjs) checks delivery prerequisites with a
-disposable signing probe. [scripts/review.mjs](scripts/review.mjs) executes exact-head
-local validation and safe restoration. [scripts/merge.mjs](scripts/merge.mjs) executes local
+recovery and approval evidence. [scripts/preflight.mjs](scripts/preflight.mjs) checks
+delivery prerequisites and [scripts/review.mjs](scripts/review.mjs) runs review's local
+checks. [scripts/merge.mjs](scripts/merge.mjs) executes local
 integration verification and records command results itself.
 [scripts/pr.mjs](scripts/pr.mjs) owns the queue (`queue next/set-status/inbox`), fix
 briefs (`brief`, from [references/fix-brief.md](references/fix-brief.md)), the push gate
@@ -263,6 +246,13 @@ the disk space they occupy, including dependencies.
 
 Durable review/approval records now live in `review/records/`; prepared comments and
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
+
+**Version 3.3.0:** no config changes. Version 3.3 adds delivery preflight
+(`scripts/preflight.mjs`: `gh` identity and write access, origin/base, one signing probe)
+before run and finish workers, and `scripts/review.mjs verify`, which runs review's local
+checks at the exact PR head and restores the worktree. A replaced `last-run.json` is
+archived to `<worktreeRoot>/runs/`. A failed dependency install is now retried on the next
+prepare. See [shared workflow state](references/workflow-state.md).
 
 **Version 3.2.0:** the push gate counts moved code once. A branch over the size limit
 auto-passes when its effective size (raw minus lines moved as contiguous blocks of 3+) is within the

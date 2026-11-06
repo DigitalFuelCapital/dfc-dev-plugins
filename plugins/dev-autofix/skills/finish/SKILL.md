@@ -2,7 +2,7 @@
 name: finish
 description: Act on reviews of autofix PRs. Address findings with an Opus worker, or merge an unchanged head with a commit-bound approval. Test clean base integration locally without changing the approved PR head. Preserve unfinished worktrees and clean up only verified completed work. Invoke manually after reviewing.
 disable-model-invocation: true
-argument-hint: "[repo ...] [run=UUID | pr=N ...] [dry-run]"
+argument-hint: "[repo ...] [pr=N ...] [dry-run]"
 ---
 
 # /dev-autofix:finish - act on your PR review
@@ -21,8 +21,7 @@ This skill reads those comments and closes the loop:
   earlier merges move the base. Conflict resolutions that change the PR need review.
   After merging, mark the queue entry `merged` and perform checked cleanup.
 
-Arguments (any order, `=` or `-` as separator): repo names to limit scope, `run=UUID`
-to select an earlier run, `pr=N` (repeat
+Arguments (any order, `=` or `-` as separator): repo names to limit scope, `pr=N` (repeat
 for several) to act on specific PRs instead of the last run's PRs, `dry-run` to classify
 pending reviews and print them without changing anything.
 
@@ -64,23 +63,16 @@ on a refusal; never continue a dependent step after one.
 
 Scope: the `pr=N` arguments (each resolved to a repo in scope; ask if ambiguous), or else
 **every PR the last `/dev-autofix:run` opened**, whether that is one PR or five. Read
-the latest snapshot through `state.mjs read-run <worktreeRoot>`, or select its historical
-record with `read-run <worktreeRoot> <run-id>` for `run=UUID`, keeping configured repos
-in scope. Do not combine `run=UUID` and `pr=N`; report ambiguous selection before acting.
-Persist this fixed snapshot for the pass and report run ID/time/status. New empty runs
-have `prs: []`: report an empty pass instead of falling back to an older run. An
-interrupted `running` receipt remains resumable evidence, not proof of completion:
+them from the run manifest `<worktreeRoot>/last-run.json`, keeping only entries for repos
+in scope:
 
 ```bash
-node <plugin>/scripts/state.mjs read-run <worktreeRoot>
-# For an explicit historical batch, pass its UUID as the final argument instead.
+jq -r '"last run \(.startedAt): \(.prs | length) PRs"' <worktreeRoot>/last-run.json
+jq -r '.prs[] | "\(.repo) \(.number) \(.branch)"' <worktreeRoot>/last-run.json
 ```
 
-Use the returned snapshot's `prs` throughout this pass. For explicit `pr=N`, skip
-manifest discovery; those PRs remain selectable even when no manifest exists.
-
 If the manifest is missing, stop and say so, and suggest `pr=N`. PRs from earlier runs are
-out of scope unless selected with `run=UUID` or named with `pr=N`.
+out of scope unless named with `pr=N`.
 
 Work through the PRs **sequentially in ascending PR number** within each repo, one repo
 after another. PRs in the same repo share one worktree (step 4), so they never run in
@@ -151,12 +143,9 @@ the lockfile digest changed.
 
 Use this step for the address path, or when step 9 finds a conflict that requires a
 published resolution. Approval with a clean local integration goes directly to step 9.
-Before syncing or launching a correction/conflict worker, run
-`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`. Signing/access failures
-block source work for this repo; report them and continue with other PRs. Do not require
-a local signing key for a merge-only clean approval: that path publishes no local commit.
-`dry-run` skips delivery preflight and performs no signing probe.
-Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
+Before syncing or launching a worker (not for merge-only approvals or `dry-run`), run
+`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`; on failure, report it,
+skip this repo's source work and continue with other PRs. Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
 and requires another review; a local verification merge never gets pushed.
 
 ```bash

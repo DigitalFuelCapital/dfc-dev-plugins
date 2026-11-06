@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { acquireLock, processStart } from '../scripts/state.mjs';
-import { createRuntime, verifyReview, checkVerifiedReview } from '../scripts/review.mjs';
+import { createRuntime, verifyReview } from '../scripts/review.mjs';
 
 const BASE = 'a'.repeat(40), HEAD = 'b'.repeat(40), NEXT = 'c'.repeat(40);
 
@@ -39,6 +39,7 @@ function fixture(t, { detached = false } = {}) {
       return '';
     }
     if (args[0] === 'rev-parse' && state.refs.has(args[1])) return state.refs.get(args[1]);
+    if (args[0] === 'update-ref') { state.refs.set(args[1], args[2]); return ''; }
     if (args[0] === 'checkout') {
       assert.equal(cwd, wt, 'never switch the main checkout');
       assert.ok(!args.includes('--force') && !args.includes('-f'));
@@ -74,11 +75,12 @@ test('review retains exact objects, executes configured checks and restores the 
   assert.deepEqual(f.state.runs, ['prepare fixture', 'verify acceptance']);
   assert.equal(result.restoration.status, 'restored');
   assert.equal(f.state.head, BASE); assert.equal(f.state.branch, 'user-work');
-  assert.equal(f.state.refs.get(result.headRef), HEAD);
-  assert.equal(f.state.refs.get(result.baseRef), BASE);
+  // Fetches into the shared remote-tracking ref; a clean restore leaves no private refs.
+  assert.equal(f.state.refs.get('refs/remotes/origin/fix/auto-20261106-fix'), HEAD);
+  assert.ok(![...f.state.refs.keys()].some(ref => ref.startsWith('refs/autofix/')));
+  assert.equal(result.retainedRef, undefined);
   assert.equal(result.commands[0].timeoutMs, 600000);
   assert.equal(JSON.parse(fs.readFileSync(f.receipt(result))).status, 'passed');
-  assert.deepEqual(await checkVerifiedReview(f.config, 'repo', f.token, f.input, result.id, f.runtime), { number: 42, reviewedHead: HEAD, baseSha: BASE, validationId: result.id });
   assert.ok(!f.state.calls.some(({ args }) => ['merge', 'reset', 'clean', 'stash', 'commit', 'push'].includes(args[0])));
 });
 
@@ -137,7 +139,6 @@ test('failure, timeout and interruption stop remaining checks and restore the cl
       assert.equal(result.restoration.status, 'restored');
       assert.equal(f.state.runs.length, 1);
       assert.equal(f.state.head, BASE); assert.equal(f.state.branch, 'user-work');
-      await assert.rejects(checkVerifiedReview(f.config, 'repo', f.token, f.input, result.id, f.runtime), /did not pass/);
     });
   }
 });
@@ -155,6 +156,8 @@ test('dirty output and an advanced original branch are preserved as restoration 
       assert.equal(result.status, 'failed');
       assert.equal(result.restoration.status, 'failed');
       assert.equal(f.state.branch, 'HEAD');
+      // The preserved detached checkout keeps a private retaining ref.
+      assert.equal(f.state.refs.get(result.retainedRef), f.state.head);
       if (scenario === 'dirty') assert.equal(fs.readFileSync(path.join(f.wt, 'unfinished.txt'), 'utf8'), 'preserve me');
       assert.ok(!f.state.calls.some(({ args }) => args[0] === 'checkout' && args[1] === 'user-work'));
     });
@@ -172,22 +175,6 @@ test('head or base movement during checks invalidates the receipt while restorin
   }
 });
 
-test('receipt checks reject changed commands, logs, deadlines, retaining refs and PR freshness', async t => {
-  for (const scenario of ['config', 'log', 'deadline', 'ref', 'head', 'base']) {
-    await t.test(scenario, async t => {
-      const f = fixture(t), result = await verifyReview(f.config, 'repo', f.token, f.input, f.runtime);
-      assert.equal(result.status, 'passed', result.error);
-      if (scenario === 'config') f.config.repos[0].verify.push('another required check');
-      if (scenario === 'log') fs.appendFileSync(result.commands[0].log, 'modified');
-      if (scenario === 'deadline') { const saved = JSON.parse(fs.readFileSync(f.receipt(result))); saved.commands[0].timeoutMs = 1; fs.writeFileSync(f.receipt(result), JSON.stringify(saved)); }
-      if (scenario === 'ref') f.state.refs.set(result.headRef, NEXT);
-      if (scenario === 'head') f.state.pr.headRefOid = NEXT;
-      if (scenario === 'base') f.state.remoteBase = NEXT;
-      await assert.rejects(checkVerifiedReview(f.config, 'repo', f.token, f.input, result.id, f.runtime), /changed|failed/);
-    });
-  }
-});
-
 test('default npm install skips lifecycle scripts and writes only the shared digest cache', async t => {
   const f = fixture(t);
   fs.writeFileSync(path.join(f.wt, 'package.json'), '{}\n');
@@ -200,20 +187,12 @@ test('default npm install skips lifecycle scripts and writes only the shared dig
   const second = await verifyReview(f.config, 'repo', f.token, f.input, f.runtime);
   assert.equal(second.status, 'passed', second.error);
   assert.deepEqual(second.commands.map(item => item.phase), ['prepare', 'verify']);
-});
-
-test('escaping dependency paths fail safely and preserve the original checkout', async t => {
-  for (const scenario of ['traversal', 'symlink']) {
-    await t.test(scenario, async t => {
-      const f = fixture(t);
-      if (scenario === 'traversal') f.config.repos[0].lockfile = '../outside.json';
-      else { fs.writeFileSync(path.join(f.directory, 'outside.json'), '{}'); fs.symlinkSync(path.join(f.directory, 'outside.json'), path.join(f.wt, 'package-lock.json')); }
-      const result = await verifyReview(f.config, 'repo', f.token, f.input, f.runtime);
-      assert.equal(result.status, 'failed');
-      assert.match(result.error, /Lockfile/);
-      assert.equal(result.restoration.status, 'restored');
-    });
-  }
+  // A failed install drops the cache so a partial node_modules cannot skip the retry.
+  fs.rmSync(path.join(f.wt, 'node_modules'), { recursive: true });
+  f.state.exitCode = 1;
+  f.state.onRun = () => fs.mkdirSync(path.join(f.wt, 'node_modules'), { recursive: true });
+  assert.equal((await verifyReview(f.config, 'repo', f.token, f.input, f.runtime)).status, 'failed');
+  assert.equal(fs.existsSync(path.join(f.root, 'repo.lock.sha')), false);
 });
 
 test('real Git and commands verify the exact PR bytes and restore the user branch without touching the main checkout', async t => {
@@ -253,5 +232,5 @@ test('real Git and commands verify the exact PR bytes and restore the user branc
   assert.equal(fs.readFileSync(path.join(wt, 'source.txt'), 'utf8'), 'original branch\n');
   assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD']), 'main');
   assert.ok(!fs.existsSync(path.join(main, 'source.txt')));
-  assert.equal((await checkVerifiedReview(config, 'repo', token, input, result.id, runtime)).reviewedHead, head);
+  assert.equal(git(['for-each-ref', '--format=%(refname)', 'refs/autofix']), '');
 });

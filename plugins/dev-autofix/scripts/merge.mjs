@@ -18,6 +18,23 @@ const contractHash = repo => hash(JSON.stringify(contract(repo)));
 const refName = (repo, id) => `refs/autofix/verify/${repo.name}/${id}`;
 const recordPath = (root, repo, id) => path.join(root, 'review', 'records', 'verification', `${repo.name}-${id}.json`);
 
+const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund';
+
+// Shared by prepare, review and merge verification. `exec(phase, command)` returns true on
+// success. The lock-sha cache is dropped first so a failed or partial install is retried.
+export async function installIfStale(root, repo, wtPath, exec) {
+  const lockfile = path.resolve(wtPath, repo.lockfile ?? 'package-lock.json');
+  const digest = fs.existsSync(lockfile) ? hash(fs.readFileSync(lockfile)) : 'no-lockfile';
+  const cache = path.join(root, `${repo.name}.lock.sha`);
+  const prior = fs.existsSync(cache) ? fs.readFileSync(cache, 'utf8').trim().split(/\s+/)[0] : null;
+  const install = repo.install ?? (fs.existsSync(path.join(wtPath, 'package.json')) ? DEFAULT_INSTALL : null);
+  if (!install || (fs.existsSync(path.join(wtPath, 'node_modules')) && prior === digest)) return null;
+  fs.rmSync(cache, { force: true });
+  if (!await exec('install', install)) return false;
+  fs.writeFileSync(cache, `${digest}\n`);
+  return true;
+}
+
 export function createRuntime(env = process.env) {
   const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, timeout: 120000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options }).trimEnd();
   const git = (cwd, args) => execute('git', ['-C', cwd, ...args]);
@@ -164,15 +181,7 @@ export async function verifyMerge(config, name, token, approval, runtime = creat
       requireValue(!execution.timedOut, `${phase} command timed out after ${execution.timeoutMs} ms: ${command}; see ${log}`);
       requireValue(execution.exitCode === 0 && !execution.signal, `${phase} command failed: ${command}; see ${log}`);
     };
-    const lockfile = path.resolve(wt.path, repo.lockfile ?? 'package-lock.json');
-    const fingerprint = fs.existsSync(lockfile) ? hash(fs.readFileSync(lockfile)) : 'no-lockfile';
-    const installHash = path.join(root, `${name}.lock.sha`);
-    const prior = fs.existsSync(installHash) ? fs.readFileSync(installHash, 'utf8').trim().split(/\s+/)[0] : null;
-    const install = repo.install ?? (fs.existsSync(path.join(wt.path, 'package.json')) ? 'npm ci --ignore-scripts --no-audit --no-fund' : null);
-    if (install && (!fs.existsSync(path.join(wt.path, 'node_modules')) || prior !== fingerprint)) {
-      await run('install', install);
-      fs.writeFileSync(installHash, `${fingerprint}\n`);
-    }
+    await installIfStale(root, repo, wt.path, async (phase, command) => { await run(phase, command); return true; });
     for (const command of repo.prepare ?? []) await run('prepare', command);
     for (const command of repo.verify) await run('verify', command);
     const after = checkWorktree(config, name, token, runtime.git);
