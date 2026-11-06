@@ -26,7 +26,7 @@ PR. Never push to the base branch, never force-push, never merge.
 3. **Implement** the milestones in order inside the worktree. Follow the repository's
    instructions, `task.forbidden`, and its commit-signing rules. Add tests for the
    acceptance criteria. Commit each milestone with explicit paths, then record it:
-   `<state> --repo <task.repo> progress <id> "<what was done>"`.
+   `<state> --remote <task.remote> progress <id> "<what was done>"`.
 4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree> <task.config> <task.repo>`
    runs that repo's configured install, prepare and verify commands. Always pass the
    recorded config and repo; discovery from the worktree would miss them. Give it a long
@@ -43,7 +43,7 @@ PR. Never push to the base branch, never force-push, never merge.
    `gh pr create --draft --repo <remote> --base <baseBranch> --head <branch> --title
    <title> --body-file <file>`. The body summarizes the change and verification, then
    includes `plan.md` inside `<details><summary>Plan</summary>...</details>` so the
-   reviewer has it. Record the number: `<state> --repo <task.repo> pr <id> <number>`.
+   reviewer has it. Record the number: `<state> --remote <task.remote> pr <id> <number>`.
 6. **Stop.** Report the PR URL, milestones done and verification result. Tell the user
    to review it in Codex with `$task-review <number>` (or `/dev-autotask:task-review <number>`),
    then run `/dev-autotask:finish <id>`. Do not review it yourself.

@@ -9,7 +9,6 @@ import { pathToFileURL } from 'node:url';
 // list) instead of a per-repo dev-autotask config; autotask-only settings are defaults.
 const CONFIG = 'autofix.config.json';
 export const ROOT = '~/.claude/dev-autotask';
-const INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund'; // autofix schema's default
 const need = (ok, message) => { if (!ok) throw new Error(message); };
 const text = value => typeof value === 'string' && value.trim() !== '';
 const list = (value, ok = text) => value === undefined || (Array.isArray(value) && value.every(ok));
@@ -50,7 +49,7 @@ function checkRepo(repo, file) {
   need(list(repo.env, n => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)), `${at}: env must be a list of variable names`);
   const seconds = repo.commandTimeoutSeconds ?? 600;
   need(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, `${at}: commandTimeoutSeconds must be 1-3600`);
-  return { ...repo, install: repo.install ?? INSTALL, prepare: repo.prepare ?? [], env: repo.env ?? [], forbidden: repo.forbidden ?? [], commandTimeoutSeconds: seconds };
+  return { ...repo, install: repo.install ?? null, prepare: repo.prepare ?? [], env: repo.env ?? [], forbidden: repo.forbidden ?? [], commandTimeoutSeconds: seconds };
 }
 
 // Picks one repo: by name, by GitHub remote, the one whose checkout contains cwd, or the
@@ -116,8 +115,10 @@ export function createTask(config, id, title) {
   return { ...task, plan: p.plan };
 }
 
-// Every task under root, optionally only one repo's (by recorded name or remote).
-export function listTasks({ root = ROOT, repo, remote } = {}) {
+// A 1.0 task.json has no `remote` and points at dev-autotask.config.json; it is never
+// resumed or listed, only reported by locate().
+const legacy = task => typeof task?.remote !== 'string' || path.basename(String(task.config)) !== CONFIG;
+function scan(root) {
   const dir = path.join(expand(root), 'tasks');
   const dirs = p => fs.existsSync(p) ? fs.readdirSync(p, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name) : [];
   const found = [];
@@ -125,20 +126,27 @@ export function listTasks({ root = ROOT, repo, remote } = {}) {
     for (const name of dirs(path.join(dir, owner))) {
       for (const id of dirs(path.join(dir, owner, name))) {
         const record = path.join(dir, owner, name, id, 'task.json');
-        if (!fs.existsSync(record)) continue;
-        const task = read(record);
-        if ((!repo || task.repo === repo) && (!remote || task.remote.toLowerCase() === remote.toLowerCase())) found.push({ id, repo: task.repo, remote: task.remote, title: task.title, pr: task.pr, record });
+        if (fs.existsSync(record)) found.push({ id, record, task: read(record) });
       }
     }
   }
   return found;
 }
 
+// Every current task under root, optionally only one GitHub repository's. Repo names are
+// aliases local to one config, so callers resolve them to a remote first (see main).
+export function listTasks({ root = ROOT, remote } = {}) {
+  return scan(root)
+    .filter(({ task }) => !legacy(task) && (!remote || task.remote.toLowerCase() === remote.toLowerCase()))
+    .map(({ id, record, task }) => ({ id, repo: task.repo, remote: task.remote, title: task.title, pr: task.pr, record }));
+}
+
 function locate(id, options) {
   taskPaths('/', 'o/r', id); // validates the ID
   const hits = listTasks(options).filter(t => t.id === id);
-  need(hits.length, `No task ${id}${options.repo ? ` for ${options.repo}` : ''}`);
-  need(hits.length === 1, `Task ${id} exists for several repos (${hits.map(t => t.repo).join(', ')}); pass --repo <name>`);
+  need(hits.length || !scan(options.root ?? ROOT).some(t => t.id === id && legacy(t.task)), `Task ${id} was created by dev-autotask 1.0; re-plan it with /dev-autotask:plan`);
+  need(hits.length, `No task ${id}${options.remote ? ` for ${options.remote}` : ''}`);
+  need(hits.length === 1, `Task ${id} exists for several repos (${hits.map(t => t.remote).join(', ')}); pass --repo <name>`);
   return hits[0].record;
 }
 
@@ -180,13 +188,16 @@ function main(argv) {
   }
   need(!('repo' in options && 'remote' in options) && Object.values(options).every(text), USAGE);
   const [command, id, ...rest] = args;
+  // Task lookups never match the alias itself: it is resolved through this workspace's
+  // config to a remote, so another workspace's same-named repo cannot be picked.
+  const scope = { remote: options.repo ? loadConfig(findConfig(), options).repo.remote : options.remote };
   switch (command) {
     case 'config': return loadConfig(findConfig(), options);
     case 'create': return createTask(loadConfig(findConfig(), options), id, rest.join(' '));
-    case 'list': return listTasks(options);
-    case 'show': return showTask(id, options);
-    case 'pr': return setPR(id, rest[0], options);
-    case 'progress': return addProgress(id, rest.join(' '), options);
+    case 'list': return listTasks(scope);
+    case 'show': return showTask(id, scope);
+    case 'pr': return setPR(id, rest[0], scope);
+    case 'progress': return addProgress(id, rest.join(' '), scope);
     default: throw new Error(USAGE);
   }
 }

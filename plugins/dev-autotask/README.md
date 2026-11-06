@@ -79,9 +79,10 @@ repos and writes one in dev-autofix's format
 ([schema](../dev-autofix/schema/autofix.config.schema.json)), so dev-autofix can use it
 too.
 
-Per repo it reads `path`, `remote`, `baseBranch`, `install` (default `npm ci
---ignore-scripts --no-audit --no-fund`), `prepare`, `verify` (at least one command),
-`commandTimeoutSeconds` (default 600) and `forbidden` (plus the top-level `forbidden`).
+Per repo it reads `path`, `remote`, `baseBranch`, `install`, `prepare`, `verify` (at least
+one command), `commandTimeoutSeconds` (default 600) and `forbidden` (plus the top-level
+`forbidden`). As in dev-autofix, an omitted `install` means `npm ci --ignore-scripts
+--no-audit --no-fund` when the checkout has a `package.json`, and no install otherwise.
 `node scripts/verify.mjs <dir> <config> <repo-name>` runs install, prepare and verify with
 a per-command timeout and a minimal environment: `CI=1` plus `PATH`, `HOME`, locale, temp
 and package-manager cache variables only. Tokens in your shell are not passed through;
@@ -91,7 +92,8 @@ commands that need credentials must get them from files under `HOME` (for exampl
 
 Task state lives under `~/.claude/dev-autotask` (it must resolve outside every configured
 checkout), namespaced by GitHub repository, so the same task ID can exist in two repos
-(then pass `<repo>:<id>`):
+(then pass `<repo>:<id>`; the name is resolved through the current workspace's config).
+Records from dev-autotask 1.0 are not resumed; re-plan them:
 
 ```text
 <root>/tasks/<owner>/<repo>/<id>/task.json   id, title, config, repo, remote, baseBranch, branch, worktree, pr, progress

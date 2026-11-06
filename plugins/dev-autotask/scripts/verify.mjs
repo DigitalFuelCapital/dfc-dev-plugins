@@ -1,10 +1,13 @@
 // Runs the selected repo's install, prepare and verify commands, in order, in <dir>.
 // Output streams through; stops at the first failure. Exit code 0 only if all pass.
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './state.mjs';
+
+export const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund'; // autofix's default
 
 // KEY-DECISION 2026-11-06: commands get a minimal environment, not process.env, so repo
 // scripts (and security regression tests) never see the caller's tokens or credentials.
@@ -52,7 +55,10 @@ export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = com
 }
 
 export async function verify(config, dir, { stdio = 'inherit', log = console.error } = {}) {
-  const commands = [config.repo.install, ...config.repo.prepare, ...config.repo.verify].filter(Boolean);
+  // Same rule as dev-autofix's installIfStale: no install configured means the default
+  // npm install only when the checkout has a package.json, otherwise none.
+  const install = config.repo.install ?? (fs.existsSync(path.join(dir, 'package.json')) ? DEFAULT_INSTALL : null);
+  const commands = [install, ...config.repo.prepare, ...config.repo.verify].filter(Boolean);
   const results = [];
   for (const command of commands) {
     if (cancelled) break;

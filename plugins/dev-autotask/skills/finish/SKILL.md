@@ -23,8 +23,8 @@ never use `--admin` or auto-merge, never merge without an explicit request.
    signing rules. A finding that does not hold gets an evidence-backed explanation
    instead. Run `node <plugin>/scripts/verify.mjs <worktree> <task.config> <task.repo>`
    with a long timeout until it passes, then `git -C <worktree> push` (no force), post
-   one comment summarizing each finding's fix or rebuttal, and `<state> --repo
-   <task.repo> progress <id> "<summary>"`. Stop:
+   one comment summarizing each finding's fix or rebuttal, and `<state> --remote
+   <task.remote> progress <id> "<summary>"`. Stop:
    "Ready for re-review with `$task-review <pr>`." Do not review it yourself.
 4. **LGTM for an older head** - the current head is unreviewed. Stop and ask for
    `$task-review <pr>`.

@@ -49,7 +49,7 @@ test('findConfig walks up from the start directory, then falls back to ~/.claude
 test('loadConfig applies defaults and rejects invalid configs', t => {
   const f = fixture(t, { install: undefined });
   assert.equal(f.config.repo.commandTimeoutSeconds, 600);
-  assert.equal(f.config.repo.install, 'npm ci --ignore-scripts --no-audit --no-fund');
+  assert.equal(f.config.repo.install, null); // verify applies the package.json-gated default
   assert.deepEqual([f.config.repo.prepare, f.config.repo.env, f.config.forbidden], [[], [], []]);
   assert.equal(f.config.root, f.root);
   assert.match(loadConfig(f.file, { repo: 'main' }).root, /\.claude\/dev-autotask$/);
@@ -137,10 +137,10 @@ test('the same task ID in two repos does not collide', t => {
   assert.notEqual(ta.plan, tb.plan);
   assert.notEqual(ta.worktree, tb.worktree);
   assert.equal(listTasks({ root }).length, 2);
-  assert.throws(() => showTask('export', { root }), /several repos \((alpha, beta|beta, alpha)\)/);
-  assert.equal(showTask('export', { root, repo: 'beta' }).title, 'B');
+  assert.throws(() => showTask('export', { root }), /several repos \((Owner\/alpha, Owner\/beta|Owner\/beta, Owner\/alpha)\)/);
+  assert.equal(showTask('export', { root, remote: 'Owner/beta' }).title, 'B');
   assert.equal(setPR('export', 5, { root, remote: 'owner/alpha' }).pr, 5);
-  assert.equal(showTask('export', { root, repo: 'beta' }).pr, null);
+  assert.equal(showTask('export', { root, remote: 'Owner/beta' }).pr, null);
 });
 
 test('state CLI selects the repo from --repo or the working directory', t => {
@@ -155,6 +155,39 @@ test('state CLI selects the repo from --repo or the working directory', t => {
   assert.equal(run(f.dir, 'pr', 'cli-task', '7', '--repo', 'beta').pr, 7);
   assert.equal(run(f.dir, '--repo', 'beta', 'show', 'cli-task').pr, 7);
   assert.equal(run(f.dir, 'list').length, 2);
+});
+
+test('--repo resolves through this workspace\'s config, never another workspace\'s same alias', t => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dev-autotask-home-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: home }; // both workspaces share ~/.claude/dev-autotask
+  const cli = (cwd, ...args) => JSON.parse(execFileSync('node', [path.join(scripts, 'state.mjs'), ...args], { cwd, env, encoding: 'utf8' }));
+  const workspaces = ['One', 'Two'].map(owner => {
+    const f = fixture(t);
+    rewrite(f, { ...f.raw, repos: [other(f.dir, 'app', { remote: `${owner}/app` })] });
+    cli(f.dir, '--repo', 'app', 'create', 'export', `${owner} export`);
+    return { dir: f.dir, owner };
+  });
+  for (const { dir, owner } of workspaces) {
+    assert.equal(cli(dir, '--repo', 'app', 'show', 'export').title, `${owner} export`);
+    assert.equal(cli(dir, '--repo', 'app', 'list').length, 1);
+    assert.equal(cli(dir, '--repo', 'app', 'pr', 'export', owner === 'One' ? '1' : '2').remote, `${owner}/app`);
+  }
+  assert.equal(cli(workspaces[0].dir, '--repo', 'app', 'show', 'export').pr, 1);
+  assert.equal(cli(workspaces[1].dir, '--repo', 'app', 'show', 'export').pr, 2);
+});
+
+test('1.0 task records are skipped by list and remote lookup and refused by show', t => {
+  const f = fixture(t), { root } = f;
+  createTask(f.config, 'current', 'Current');
+  const old = taskPaths(root, 'Owner/Repo', 'old');
+  fs.mkdirSync(old.taskDir, { recursive: true });
+  fs.writeFileSync(old.record, JSON.stringify({ id: 'old', title: 'Old', config: path.join(f.dir, 'dev-autotask.config.json'), repo: 'Owner/Repo', pr: null, progress: [] }));
+  assert.deepEqual(listTasks({ root }).map(x => x.id), ['current']);
+  assert.deepEqual(listTasks({ root, remote: 'Owner/Repo' }).map(x => x.id), ['current']);
+  assert.throws(() => showTask('old', { root }), /created by dev-autotask 1.0; re-plan it with \/dev-autotask:plan/);
+  assert.throws(() => showTask('old', { root, remote: 'Owner/Repo' }), /dev-autotask 1.0/);
+  assert.throws(() => setPR('old', 3, { root }), /dev-autotask 1.0/);
 });
 
 const quiet = { stdio: 'ignore', log: () => {} };
@@ -175,6 +208,19 @@ test('verify commands do not inherit the caller\'s environment', async t => {
   const g = fixture(t, { env: ['DEV_AUTOTASK_SECRET'], verify: ['echo "[$DEV_AUTOTASK_SECRET]" > env'] });
   assert.equal((await verify(g.config, g.main, quiet)).passed, true);
   assert.equal(fs.readFileSync(path.join(g.main, 'env'), 'utf8'), '[leak]\n');
+});
+
+test('without install, verify runs the npm default only when the checkout has package.json', async t => {
+  const f = fixture(t, { install: undefined, verify: ['touch verified'] });
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-autotask-wt-'));
+  t.after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  const result = await verify(f.config, bare, quiet);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.results.map(r => r.command), ['touch verified']);
+  // With a package.json the default install runs first (and fails here: no lockfile).
+  fs.writeFileSync(path.join(bare, 'package.json'), '{}');
+  const npm = await verify(f.config, bare, quiet);
+  assert.equal(npm.results[0].command, 'npm ci --ignore-scripts --no-audit --no-fund');
 });
 
 test('verify stops at the first failure', async t => {
