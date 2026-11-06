@@ -25,8 +25,8 @@ code is written**.
 ## Install
 
 ```
-/plugin marketplace add DigitalFuelCapital/dfc-claude-plugin
-/plugin install dev-autofix@dfc-claude-plugin
+/plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
+/plugin install dev-autofix@dfc-dev-plugins
 ```
 
 Then run `/dev-autofix:init` once per machine. Plugins cannot ship a status line, so init
@@ -42,15 +42,15 @@ Codex supports this repository's Claude-compatible marketplace and plugin manife
 With a current Codex CLI, register the repository and install the plugin:
 
 ```bash
-codex plugin marketplace add DigitalFuelCapital/dfc-claude-plugin
-codex plugin add dev-autofix@dfc-claude-plugin
+codex plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
+codex plugin add dev-autofix@dfc-dev-plugins
 ```
 
 To try local changes before publishing, register the local checkout instead of the
 GitHub source, then install with the same `codex plugin add` command:
 
 ```bash
-codex plugin marketplace add /absolute/path/to/dfc-claude-plugin
+codex plugin marketplace add /absolute/path/to/dfc-dev-plugins
 ```
 
 Start a new thread after installation and invoke

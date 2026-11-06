@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dfc-dev-plugins",
+  "metadata": {
+    "description": "Digital Fuel Capital developer tooling plugins for Claude Code and Codex"
+  },
+  "owner": {
+    "name": "Digital Fuel Capital"
+  },
+  "plugins": [
+    {
+      "name": "dev-autofix",
+      "source": "./plugins/dev-autofix",
+      "description": "Staff dev tooling - plan and run small fixes as signed draft PRs, review the full batch in Claude Code or Codex, then address findings and merge on approval",
+      "version": "3.2.0",
+      "author": {
+        "name": "Digital Fuel Capital"
+      }
+    }
+  ]
+}
