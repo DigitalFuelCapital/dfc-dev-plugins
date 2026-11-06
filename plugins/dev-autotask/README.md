@@ -8,8 +8,10 @@ implements and finishes; Codex reviews. GitHub (the PR, its head SHA, CI and
 
 1. `/dev-autotask:plan [repo:] <request or report path>` - Claude investigates and writes
    `plan.md`, shows it, and stops. Ask for changes, or approve by running the next step.
-   With no request it suggests 3-5 candidate tasks (from TODO/FIXME clusters, open
-   issues and dev-autofix backlog items too large for a small fix) and waits for a pick.
+   With no request it investigates the repo itself (duplicated logic, docs-vs-code gaps,
+   untested critical or risky paths, half-done migrations; TODOs, open issues and the
+   dev-autofix backlog as extra inputs) and proposes up to 5 verified, multi-file tasks too
+   large for dev-autofix, then waits for a pick.
 2. `/dev-autotask:run <id>` - Claude implements the plan in a dedicated worktree, runs the
    configured checks, pushes and opens one draft PR, then stops.
 3. `$task-review <pr>` in Codex - reviews the PR against its plan, runs the checks if it can, and
