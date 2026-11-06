@@ -10,13 +10,51 @@ installable from Codex). Private for now.
 
 ## Install
 
+Claude Code runs most skills; Codex is the main reviewer (`$review`, `$task-review`), so
+install in both.
+
+Claude Code:
+
 ```
 /plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
 /plugin install dev-autofix@dfc-dev-plugins
 /plugin install dev-autotask@dfc-dev-plugins
 ```
 
-Codex: see [plugins/dev-autofix/README.md#codex](plugins/dev-autofix/README.md#codex).
+Codex:
+
+```bash
+codex plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
+codex plugin add dev-autofix@dfc-dev-plugins
+codex plugin add dev-autotask@dfc-dev-plugins
+```
+
+Start a new Codex thread after installing. More Codex detail:
+[dev-autofix](plugins/dev-autofix/README.md#codex), [dev-autotask](plugins/dev-autotask/README.md#codex).
+
+## Update
+
+Neither tool updates automatically. After a release is merged, update **both**, or Codex
+keeps reviewing with the old skills.
+
+Claude Code:
+
+```
+/plugin marketplace update dfc-dev-plugins
+/reload-plugins
+```
+
+Codex (`codex plugin add` reinstalls the current version over the cached one):
+
+```bash
+codex plugin marketplace upgrade dfc-dev-plugins
+codex plugin add dev-autofix@dfc-dev-plugins
+codex plugin add dev-autotask@dfc-dev-plugins
+```
+
+Then start a new Codex thread; a thread that is already running keeps the skills it
+loaded. Check what Codex has installed with
+`ls ~/.codex/plugins/cache/dfc-dev-plugins/*/` (one version folder per plugin).
 
 ## Development
 
@@ -25,4 +63,5 @@ node --test plugins/*/tests/*.test.mjs
 ```
 
 Bump the plugin's version in both `plugins/<name>/.claude-plugin/plugin.json` and
-`.claude-plugin/marketplace.json`.
+`.claude-plugin/marketplace.json` on every behaviour change. Both Claude Code and Codex
+cache plugins by version, so an unbumped change never reaches installed copies.
