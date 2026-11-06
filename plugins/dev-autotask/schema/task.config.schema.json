@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dev-autotask.config.json",
+  "description": "Configuration for one repository used by the dev-autotask workflow. Runtime state and worktrees must remain outside the repository checkout.",
+  "type": "object",
+  "required": ["version", "repo"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "repo": {
+      "type": "object",
+      "required": ["path", "remote", "baseBranch", "verify"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^(?:/|[A-Za-z]:[\\\\/])",
+          "description": "Absolute path to the main checkout. The workflow uses a separate managed worktree for implementation."
+        },
+        "remote": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "description": "GitHub owner/repository, used to verify repository and PR identity."
+        },
+        "baseBranch": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Branch from which the task starts and against which its single PR is opened. Runtime validation also checks Git ref syntax."
+        },
+        "install": {
+          "type": "string",
+          "pattern": "\\S",
+          "default": "npm ci --ignore-scripts --no-audit --no-fund",
+          "description": "Dependency installation command. Inspect it before execution and retain disabled lifecycle scripts unless the task's approved setup requires a scoped exception."
+        },
+        "lockfile": {
+          "type": "string",
+          "pattern": "\\S",
+          "default": "package-lock.json",
+          "description": "Repository-relative lockfile used to identify dependency changes."
+        },
+        "prepare": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "\\S" },
+          "default": [],
+          "description": "Non-interactive setup or generation commands required before verification."
+        },
+        "verify": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "\\S" },
+          "description": "Nonempty verification commands appropriate to this repository. The task plan adds acceptance checks for the requested behavior."
+        },
+        "commandTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 600,
+          "description": "Deadline for each install, prepare or verification command. A timed-out command fails even if it exits zero during cleanup."
+        },
+        "forbidden": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "\\S" },
+          "default": [],
+          "description": "Repository-specific hard rules to preserve throughout planning, implementation and review."
+        }
+      }
+    },
+    "worktreeRoot": {
+      "type": "string",
+      "pattern": "^(?:/|~/|[A-Za-z]:[\\\\/])",
+      "default": "~/.claude/dev-autotask",
+      "description": "Absolute runtime directory, or a path beginning with ~/. It must resolve outside the main checkout. Each task has separate state and a separate worktree."
+    }
+  }
+}

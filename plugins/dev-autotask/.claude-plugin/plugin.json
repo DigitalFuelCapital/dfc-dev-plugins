@@ -1,0 +1,18 @@
+{
+  "name": "dev-autotask",
+  "displayName": "Dev Autotask",
+  "description": "Plan and complete one large development task as one PR. Approve the plan before implementation, review the result automatically, address findings, and merge only on an explicit request.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Digital Fuel Capital"
+  },
+  "license": "MIT",
+  "keywords": [
+    "development",
+    "planning",
+    "task",
+    "pull-request",
+    "worktree",
+    "review"
+  ]
+}
