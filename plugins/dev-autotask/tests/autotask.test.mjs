@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { findConfig, loadConfig, taskPaths, createTask, showTask, setPR, addProgress, listTasks } from '../scripts/state.mjs';
 import { verify } from '../scripts/verify.mjs';
@@ -150,6 +150,18 @@ test('verify CLI uses the explicit config, not one found from the working direct
   t.after(() => fs.rmSync(worktree, { recursive: true, force: true }));
   execFileSync('node', [path.join(scripts, 'verify.mjs'), worktree, f.file], { cwd: decoy.main, stdio: 'ignore' });
   assert.deepEqual(fs.readdirSync(worktree), ['real']);
+});
+
+test('cancelling the verify CLI stops the running command\'s children and fails', async t => {
+  const f = fixture(t, { verify: ['(trap "" TERM; sleep 4; touch late) & touch started; sleep 30'] });
+  const helper = spawn('node', [path.join(scripts, 'verify.mjs'), f.main, f.file], { stdio: 'ignore' });
+  const exited = new Promise(resolve => helper.on('exit', code => resolve(code)));
+  const started = Date.now();
+  while (!fs.existsSync(path.join(f.main, 'started'))) await new Promise(r => setTimeout(r, 50));
+  helper.kill('SIGTERM');
+  assert.notEqual(await exited, 0);
+  await new Promise(r => setTimeout(r, started + 5000 - Date.now()));
+  assert.equal(fs.existsSync(path.join(f.main, 'late')), false);
 });
 
 test('verify CLI exits non-zero on failure', t => {

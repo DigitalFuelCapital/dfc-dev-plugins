@@ -19,23 +19,31 @@ export const commandEnv = (source = process.env, extra = []) =>
 // One command in its own process group. When the shell exits (pass, fail or timeout) the
 // group is stopped and awaited, so no background child outlives verification.
 const GRACE_MS = 2000, GIVE_UP_MS = 10000;
+const killGroup = (pid, signal) => { try { process.kill(-pid, signal); } catch {} };
+const groupAlive = pid => { try { process.kill(-pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+// SIGTERM the group, SIGKILL after the grace period; true if it is gone within GIVE_UP_MS.
+async function stopGroup(pid) {
+  killGroup(pid, 'SIGTERM');
+  for (let waited = 0; groupAlive(pid) && waited < GIVE_UP_MS; waited += 50) {
+    if (waited === GRACE_MS) killGroup(pid, 'SIGKILL');
+    await sleep(50);
+  }
+  return !groupAlive(pid);
+}
+const active = new Set(); // running command groups, for the CLI's signal handler
+
 export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = commandEnv()) {
   return new Promise(resolve => {
     const child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio });
-    const killGroup = signal => { try { process.kill(-child.pid, signal); } catch {} };
-    const groupAlive = () => { try { process.kill(-child.pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+    if (child.pid) active.add(child.pid);
     let timedOut = false, killTimer;
-    const timer = setTimeout(() => { timedOut = true; killGroup('SIGTERM'); killTimer = setTimeout(() => killGroup('SIGKILL'), GRACE_MS); }, timeoutMs);
-    child.on('error', error => { clearTimeout(timer); resolve({ ok: false, error: error.message }); });
+    const timer = setTimeout(() => { timedOut = true; killGroup(child.pid, 'SIGTERM'); killTimer = setTimeout(() => killGroup(child.pid, 'SIGKILL'), GRACE_MS); }, timeoutMs);
+    child.on('error', error => { clearTimeout(timer); active.delete(child.pid); resolve({ ok: false, error: error.message }); });
     child.on('exit', async (code, signal) => {
       clearTimeout(timer);
       clearTimeout(killTimer);
-      killGroup('SIGTERM');
-      for (let waited = 0; groupAlive() && waited < GIVE_UP_MS; waited += 50) {
-        if (waited === GRACE_MS) killGroup('SIGKILL');
-        await sleep(50);
-      }
-      const leftover = groupAlive(); // could not be stopped: fail rather than report a clean pass
+      const leftover = !await stopGroup(child.pid); // could not be stopped: fail rather than report a clean pass
+      active.delete(child.pid);
       resolve({ ok: code === 0 && !timedOut && !leftover, code, signal, timedOut, ...(leftover && { leftover }) });
     });
   });
@@ -59,6 +67,15 @@ export async function verify(config, dir, { stdio = 'inherit', log = console.err
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const [dir, configFile] = process.argv.slice(2);
+  // Cancelling the helper stops the running command's group before exiting, and fails.
+  // Signal listeners do not keep Node alive, so normal completion is unaffected.
+  for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(name, async () => {
+      console.error(`[dev-autotask] ${name}: stopping checks`);
+      await Promise.all([...active].map(stopGroup));
+      process.exit(1);
+    });
+  }
   try {
     if (!dir) throw new Error('Usage: verify.mjs <dir> [config-file]');
     const { passed } = await verify(configFile ? loadConfig(configFile) : loadConfig(), path.resolve(dir));
