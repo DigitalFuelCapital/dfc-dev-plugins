@@ -72,7 +72,7 @@ Claude workflows.
 [the example](examples/task.config.json); fields are in
 [the schema](schema/task.config.schema.json). `repo.verify` needs at least one command;
 `repo.install` (optional) runs before them on every verification.
-`node scripts/verify.mjs <dir>` runs these with a per-command timeout and a minimal
+`node scripts/verify.mjs <dir> [config]` runs these with a per-command timeout and a minimal
 environment: `CI=1` plus `PATH`, `HOME`, locale, temp and package-manager cache
 variables only. Tokens in your shell are not passed through; commands that need
 credentials must get them from files under `HOME` (for example `~/.npmrc`), or list the

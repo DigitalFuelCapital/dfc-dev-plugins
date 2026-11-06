@@ -20,7 +20,7 @@ never use `--admin` or auto-merge, never merge without an explicit request.
 3. **Findings** (or newer human feedback) - address them in `task.worktree`:
    reproduce, fix within the plan's scope, add tests, and commit with the repository's
    signing rules. A finding that does not hold gets an evidence-backed explanation
-   instead. Run `node <plugin>/scripts/verify.mjs <worktree>` with a long timeout until
+   instead. Run `node <plugin>/scripts/verify.mjs <worktree> <task.config>` with a long timeout until
    it passes, then `git -C <worktree> push` (no force), post one comment summarizing
    each finding's fix or rebuttal, and `<state> progress <id> "<summary>"`. Stop:
    "Ready for re-review with `$task-review <pr>`." Do not review it yourself.
@@ -36,7 +36,8 @@ never use `--admin` or auto-merge, never merge without an explicit request.
      allows (`gh repo view <remote> --json
      mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`). If GitHub refuses
      (failing or pending required checks, conflicts, branch rules), report why and stop.
-     For conflicts, merge `origin/<baseBranch>` into the branch, verify and push; that
+     For conflicts, `git -C <worktree> fetch origin <baseBranch>` (allow at least
+     120s), merge `origin/<baseBranch>` into the branch, verify and push; that
      new head needs `$task-review` again. Confirm `state` is `MERGED` before saying so.
 6. **Report** the PR, head and outcome. After a merge, leave the records and mention
    `git -C <repo.path> worktree remove <worktree>` for cleanup.

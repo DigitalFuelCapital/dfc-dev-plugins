@@ -30,7 +30,8 @@ or merge. The only write to GitHub is one PR comment.
    compatibility, missing tests for changed behavior. No style nits.
 5. **Checks.** Run them in a temporary checkout of the exact head:
    `git -C <repo.path> fetch origin <headRefName>`, `git -C <repo.path> worktree add
-   --detach <tmp> <headRefOid>`, then `node <plugin>/scripts/verify.mjs <tmp>` with a
+   --detach <tmp> <headRefOid>`, then `node <plugin>/scripts/verify.mjs <tmp> <file>`
+   (`file` from the step 1 config output; discovery from `<tmp>` would miss it) with a
    long command timeout (30+ minutes; it runs install and every verify command), then
    `git -C <repo.path> worktree remove --force <tmp>`. Also note `gh pr checks <n>
    --repo <remote>`. If you cannot run the checks (sandbox, missing tools, network),

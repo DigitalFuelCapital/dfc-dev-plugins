@@ -25,9 +25,10 @@ PR. Never push to the base branch, never force-push, never merge.
    instructions, `repo.forbidden`, and its commit-signing rules. Add tests for the
    acceptance criteria. Commit each milestone with explicit paths, then record it:
    `<state> progress <id> "<what was done>"`.
-4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree>` runs the configured install
-   and verify commands; give it a long timeout (install plus every verify command can
-   take many minutes). Fix failures and re-run until it passes. Do not publish failing
+4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree> <task.config>` runs the
+   configured install and verify commands. Always pass the recorded config; discovery
+   from the worktree would miss it. Give it a long timeout (install plus every verify
+   command can take many minutes). Fix failures and re-run until it passes. Do not publish failing
    work. Read the full diff against `origin/<baseBranch>` for scope, secrets and stray
    generated files.
 5. **Publish.** If `plan.md` has a `Source: infiltrate` line, first run `gh repo view

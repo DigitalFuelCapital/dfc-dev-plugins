@@ -52,13 +52,24 @@ test('loadConfig applies defaults and rejects invalid configs', t => {
   bad({ worktreeRoot: path.join(f.main, 'runtime') }, /outside repo.path/);
 });
 
+test('loadConfig resolves symlinks before checking worktreeRoot is outside repo.path', t => {
+  const f = fixture(t);
+  const link = path.join(f.dir, 'elsewhere');
+  fs.symlinkSync(f.main, link);
+  const write = worktreeRoot => fs.writeFileSync(f.file, JSON.stringify({ ...f.raw, worktreeRoot }));
+  write(link);
+  assert.throws(() => loadConfig(f.file), /outside repo.path/);
+  write(path.join(link, 'not', 'yet', 'created'));
+  assert.throws(() => loadConfig(f.file), /outside repo.path/);
+});
+
 test('create, show, progress and PR recording keep one task and one PR', t => {
-  const { config } = fixture(t);
+  const f = fixture(t), { config } = f;
   assert.throws(() => taskPaths(config, 'Bad ID'), /lowercase slug/);
   const task = createTask(config, 'big-feature', 'Deliver the feature');
   assert.deepEqual(
     { ...task, plan: undefined },
-    { id: 'big-feature', title: 'Deliver the feature', repo: 'Owner/Repo', baseBranch: 'main', branch: 'dev/autotask-big-feature', worktree: path.join(config.root, 'worktrees', 'owner/repo', 'big-feature'), pr: null, progress: [], plan: undefined },
+    { id: 'big-feature', title: 'Deliver the feature', config: f.file, repo: 'Owner/Repo', baseBranch: 'main', branch: 'dev/autotask-big-feature', worktree: path.join(config.root, 'worktrees', 'owner/repo', 'big-feature'), pr: null, progress: [], plan: undefined },
   );
   assert.equal(task.plan, path.join(config.root, 'tasks', 'owner/repo', 'big-feature', 'plan.md'));
   assert.throws(() => createTask(config, 'big-feature', 'Again'), /already exists/);
@@ -116,6 +127,29 @@ test('verify fails a command that exceeds its timeout', async t => {
   assert.equal(result.passed, false);
   assert.equal(result.results[0].timedOut, true);
   assert.ok(Date.now() - started < 10000);
+});
+
+test('verify stops background children after a pass and after a timeout', async t => {
+  // The child ignores SIGTERM, so only the SIGKILL after the grace period stops it.
+  const late = '(trap "" TERM; sleep 4; touch late) &';
+  const f = fixture(t, { verify: [late] });
+  const g = fixture(t, { verify: [`${late} sleep 30`], commandTimeoutSeconds: 1 });
+  const started = Date.now();
+  const [pass, timeout] = await Promise.all([verify(f.config, f.main, quiet), verify(g.config, g.main, quiet)]);
+  assert.equal(pass.passed, true);
+  assert.equal(timeout.results[0].timedOut, true);
+  await new Promise(r => setTimeout(r, started + 5000 - Date.now()));
+  assert.equal(fs.existsSync(path.join(f.main, 'late')), false);
+  assert.equal(fs.existsSync(path.join(g.main, 'late')), false);
+});
+
+test('verify CLI uses the explicit config, not one found from the working directory', t => {
+  const f = fixture(t, { verify: ['touch real'] });
+  const decoy = fixture(t, { verify: ['touch decoy'] });
+  const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-autotask-wt-'));
+  t.after(() => fs.rmSync(worktree, { recursive: true, force: true }));
+  execFileSync('node', [path.join(scripts, 'verify.mjs'), worktree, f.file], { cwd: decoy.main, stdio: 'ignore' });
+  assert.deepEqual(fs.readdirSync(worktree), ['real']);
 });
 
 test('verify CLI exits non-zero on failure', t => {

@@ -2,6 +2,7 @@
 // Output streams through; stops at the first failure. Exit code 0 only if all pass.
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './state.mjs';
 
@@ -15,18 +16,27 @@ const PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TERM', 'LAN
 export const commandEnv = (source = process.env, extra = []) =>
   ({ ...Object.fromEntries([...PASS, ...extra].filter(k => source[k] !== undefined).map(k => [k, source[k]])), CI: '1' });
 
-// One command in its own process group, so a timeout or exit also stops its children.
+// One command in its own process group. When the shell exits (pass, fail or timeout) the
+// group is stopped and awaited, so no background child outlives verification.
+const GRACE_MS = 2000, GIVE_UP_MS = 10000;
 export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = commandEnv()) {
   return new Promise(resolve => {
     const child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio });
     const killGroup = signal => { try { process.kill(-child.pid, signal); } catch {} };
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killGroup('SIGTERM'); setTimeout(() => killGroup('SIGKILL'), 5000).unref(); }, timeoutMs);
+    const groupAlive = () => { try { process.kill(-child.pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+    let timedOut = false, killTimer;
+    const timer = setTimeout(() => { timedOut = true; killGroup('SIGTERM'); killTimer = setTimeout(() => killGroup('SIGKILL'), GRACE_MS); }, timeoutMs);
     child.on('error', error => { clearTimeout(timer); resolve({ ok: false, error: error.message }); });
-    child.on('exit', (code, signal) => {
+    child.on('exit', async (code, signal) => {
       clearTimeout(timer);
+      clearTimeout(killTimer);
       killGroup('SIGTERM');
-      resolve({ ok: code === 0 && !timedOut, code, signal, timedOut });
+      for (let waited = 0; groupAlive() && waited < GIVE_UP_MS; waited += 50) {
+        if (waited === GRACE_MS) killGroup('SIGKILL');
+        await sleep(50);
+      }
+      const leftover = groupAlive(); // could not be stopped: fail rather than report a clean pass
+      resolve({ ok: code === 0 && !timedOut && !leftover, code, signal, timedOut, ...(leftover && { leftover }) });
     });
   });
 }

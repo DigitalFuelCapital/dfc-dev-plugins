@@ -10,6 +10,16 @@ const need = (ok, message) => { if (!ok) throw new Error(message); };
 const text = value => typeof value === 'string' && value.trim() !== '';
 const expand = value => value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 const inside = (parent, child) => !path.relative(parent, child).startsWith('..');
+// Real path, resolving symlinks; for a path that does not exist yet, the nearest existing
+// ancestor's real path plus the rest, so a symlinked worktreeRoot cannot hide inside repo.path.
+const real = p => {
+  const missing = [];
+  for (let dir = path.resolve(p); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(dir)) return path.join(fs.realpathSync(dir), ...missing);
+    if (path.dirname(dir) === dir) return path.resolve(p);
+    missing.unshift(path.basename(dir));
+  }
+};
 
 // Nearest dev-autotask.config.json from `start` upward, else ~/.claude/<name>.
 export function findConfig(start = process.cwd()) {
@@ -36,8 +46,8 @@ export function loadConfig(file = findConfig()) {
   need(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, 'commandTimeoutSeconds must be 1-3600');
   const root = expand(config.worktreeRoot ?? '~/.claude/dev-autotask');
   need(path.isAbsolute(root), 'worktreeRoot must be absolute or start with ~/');
-  need(!inside(path.resolve(repo.path), path.resolve(root)), 'worktreeRoot must be outside repo.path');
-  return { ...config, file, root, repo: { ...repo, commandTimeoutSeconds: seconds } };
+  need(!inside(real(repo.path), real(root)), 'worktreeRoot must be outside repo.path');
+  return { ...config, file: path.resolve(file), root, repo: { ...repo, commandTimeoutSeconds: seconds } };
 }
 
 export function taskPaths(config, id) {
@@ -58,7 +68,9 @@ export function createTask(config, id, title) {
   const p = taskPaths(config, id);
   need(!fs.existsSync(p.record), `Task ${id} already exists; resume it instead`);
   fs.mkdirSync(p.taskDir, { recursive: true });
-  const task = { id, title, repo: config.repo.remote, baseBranch: config.repo.baseBranch, branch: p.branch, worktree: p.worktree, pr: null, progress: [] };
+  // config: the file this task was created from; verify.mjs gets it explicitly, since
+  // discovery from a worktree outside the checkout would miss it or find another config.
+  const task = { id, title, config: config.file, repo: config.repo.remote, baseBranch: config.repo.baseBranch, branch: p.branch, worktree: p.worktree, pr: null, progress: [] };
   write(p.record, task);
   return { ...task, plan: p.plan };
 }
