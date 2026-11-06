@@ -19,7 +19,7 @@ const refName = (repo, id) => `refs/autofix/verify/${repo.name}/${id}`;
 const recordPath = (root, repo, id) => path.join(root, 'review', 'records', 'verification', `${repo.name}-${id}.json`);
 
 export function createRuntime(env = process.env) {
-  const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options }).trimEnd();
+  const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, timeout: 120000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], ...options }).trimEnd();
   const git = (cwd, args) => execute('git', ['-C', cwd, ...args]);
   return {
     git,
@@ -41,8 +41,9 @@ export function createRuntime(env = process.env) {
       // A separate POSIX group lets cleanup stop the shell AND its test-runner children.
       const child = spawn('/bin/sh', ['-c', command], { cwd, env: { ...env, CI: '1' }, detached: true, stdio: ['ignore', fd, fd] });
       let timedOut = false, exited = false, cleanupStarted = false, cleanupDone = false, settled = false;
-      let exitCode = null, signal = null, killTimer, cleanupError;
+      let exitCode = null, signal = null, killTimer, cleanupError, interrupted;
       const killGroup = sig => {
+        if (!Number.isSafeInteger(child.pid)) return false;
         try { process.kill(-child.pid, sig); return true; }
         catch (error) { if (error.code !== 'ESRCH') cleanupError = error; }
         return false;
@@ -51,9 +52,10 @@ export function createRuntime(env = process.env) {
         if (settled || (!error && (!exited || !cleanupDone))) return;
         settled = true;
         clearTimeout(timer); clearTimeout(killTimer);
+        process.removeListener('SIGINT', onInterrupt); process.removeListener('SIGTERM', onTerminate);
         fs.closeSync(fd);
         if (error || cleanupError) reject(error ?? cleanupError);
-        else resolve({ exitCode, signal, timedOut, timeoutMs });
+        else resolve({ exitCode, signal: interrupted ?? signal, timedOut, timeoutMs });
       };
       const stopGroup = () => {
         if (cleanupStarted) return;
@@ -64,7 +66,7 @@ export function createRuntime(env = process.env) {
           finish();
           return;
         }
-        if (!timedOut) fs.writeSync(fd, '\n[dev-autofix] Command exited; terminating remaining background processes.\n');
+        if (!timedOut && !interrupted) fs.writeSync(fd, '\n[dev-autofix] Command exited; terminating remaining background processes.\n');
         // Do not resolve when only the shell exits: descendants may ignore SIGTERM.
         killTimer = setTimeout(() => {
           killGroup('SIGKILL');
@@ -77,6 +79,14 @@ export function createRuntime(env = process.env) {
         fs.writeSync(fd, `\n[dev-autofix] Command timed out after ${timeoutMs} ms; terminating process group.\n`);
         stopGroup();
       }, timeoutMs);
+      const interrupt = sig => {
+        interrupted = sig;
+        fs.writeSync(fd, `\n[dev-autofix] Interrupted by ${sig}; terminating process group.\n`);
+        stopGroup();
+      };
+      const onInterrupt = () => interrupt('SIGINT');
+      const onTerminate = () => interrupt('SIGTERM');
+      process.once('SIGINT', onInterrupt); process.once('SIGTERM', onTerminate);
       child.once('error', finish);
       child.once('exit', (code, sig) => { exitCode = code; signal = sig; exited = true; stopGroup(); finish(); });
     }),

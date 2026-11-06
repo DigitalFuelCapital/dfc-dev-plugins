@@ -12,6 +12,9 @@ not continue a dependent action after failure. Shell-quote paths and arguments.
 | `state.mjs config / lock / unlock / inspect-lock / resume-lock / break-lock` | config check and lock ownership |
 | `state.mjs worktree / quarantine / list-recovery` | worktree guard and preserved recoveries |
 | `state.mjs record-pr / record-approval / approval` | manifest, approval records, approval checker |
+| `state.mjs start-run / read-run / finish-run` | durable batches, including empty/stopped runs and historical selection |
+| `preflight.mjs <config> [repo-name ...]` | publishing identity/access and disposable trusted signing check |
+| `review.mjs verify / check` | exact-head local review validation, safe restoration and checked receipts |
 | `pr.mjs prepare` | create or reuse the managed worktree, refresh dependencies |
 | `pr.mjs queue next / set-status / inbox / add-fallback` | queue selection and bookkeeping |
 | `pr.mjs brief` | render a fix worker's brief from `references/fix-brief.md` |
@@ -49,6 +52,13 @@ node <plugin>/scripts/state.mjs lock <worktreeRoot>/.locks/run <identity-file>
 ```
 
 The returned UUID is `runToken`. Persist one ISO `startedAt` for the invocation too.
+For non-dry-run execution, immediately create/resume the run before preflight or budget
+gates: `node <plugin>/scripts/state.mjs start-run <worktreeRoot> <startedAt> <runToken>`.
+Retain its `runId`. The same running timestamp resumes idempotently; a new invocation
+uses a new timestamp and immediately publishes an empty current batch. In finally,
+after workers stop and before unlocking, call `finish-run <worktreeRoot> <runId>
+<runToken> <result-file>` with `{status:"complete"|"stopped"|"failed",summary,outcomes}`.
+Report failed finalization; never silently discard a running receipt.
 Before creating, checking out, testing, editing, or removing a repo's shared worktree,
 also acquire `<worktreeRoot>/.locks/repo-<repo.name>` with the same identity file. Its
 UUID is `repoToken`. Hold the repo lock throughout worker activity. Review can still
@@ -86,7 +96,8 @@ node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
 
 The helper checks ownership, root/main separation, the GitHub origin (including SSH
 HostName aliases and `ssh.github.com`), registration, clean index and tracked/untracked
-files, no active Git operation, and a branch or `refs/autofix/verify/` ref retaining
+files, no active Git operation, and a branch, `refs/autofix/verify/` or
+`refs/autofix/review/` ref retaining
 HEAD. It accepts case and URL spelling differences but rejects another host or
 repository. It never switches or discards work itself.
 
@@ -152,6 +163,20 @@ only after installation succeeds. Never compare full `shasum` output with this f
 
 ## PR registration and recovery
 
+Each run has `<worktreeRoot>/runs/<runId>.json`, with UUID, start/end times, status,
+PRs and optional per-entry outcomes. `last-run.json` remains a compatible full snapshot
+of the current run, including `prs: []` for an empty or preflight/budget-blocked run.
+Only the run-lock owner writes these. History is saved before the snapshot; readers
+recover a stale snapshot from a newer revision of that same history. Malformed or
+conflicting records are preserved and block dependent changes.
+
+Use `state.mjs read-run <worktreeRoot>` for the current batch, or
+`read-run <worktreeRoot> <runId>` for historical selection. Reads are read-only and
+validate identities. Legacy manifests without a run ID remain readable and are
+adopted into history on an owned write. An interrupted historical `running` record is
+retained, not silently labelled completed. Never replace an empty current batch with
+an older nonempty one; use an explicit run ID or `pr=N` to select older work.
+
 `scripts/pr.mjs publish` registers each PR it creates or discovers, after verifying
 repository/head/base and before setting `pr-open`. For a PR discovered outside `publish`
 (a `pushed` entry in run's recovery pass), write an entry JSON file with `repo`, `number`,
@@ -162,10 +187,58 @@ node <plugin>/scripts/state.mjs record-pr <worktreeRoot> <startedAt> <entry-file
 ```
 
 Only the lead calls this, **serially**, while holding the run lock. Workers never write the
-manifest. The atomic upsert deduplicates by repo/number. The first registration of a run
-replaces the prior manifest; later ones append; no registrations leave it intact. On
+manifest. The upsert deduplicates by repo/number and updates the selected running
+history plus its snapshot. Older timestamps and finalized runs cannot receive late
+registrations. Legacy callers can still register their first PR implicitly; new runs
+must call `start-run` first so zero-PR runs are represented. On
 failure, leave the queue `pushed` and stop publication until registration succeeds.
 Malformed manifests are preserved and block registration.
+
+## Delivery preflight
+
+Before run workers or finish correction/conflict workers, run
+`node <plugin>/scripts/preflight.mjs <config-file> [repo-name ...]` for repos in scope.
+It resolves the actual `gh` login and repository write permission, checks the verified
+origin and readable base, then signs and locally verifies an empty disposable commit.
+The probe uses effective signing/trust settings without changing source objects, refs,
+index, working files or config, and pushes nothing. It has bounded commands and removes
+temporary probe artifacts. Never repair a failed check by disabling signing.
+
+A publishing author outside `reviewers` is a warning for run (a bot may open fixes
+for human reviewers). It blocks consuming that author's review comments, not ordinary
+PR publication. When reviewers are omitted, finish defaults to the authenticated gh
+login; connector review authors must be checked separately against that effective
+list. A local trusted signature does not prove GitHub associates it with a verified
+key/account or accepts every branch rule. Keep this limit visible. Read-only planning,
+dry-run, remote review and merge-only approval do not need a local signing probe.
+
+## Local review validation
+
+Prepare input JSON `{number,headSha,baseSha}` from the exact reviewed PR snapshot.
+Under the repo lock, after inspecting configured commands, run:
+
+```bash
+node <plugin>/scripts/review.mjs verify <config-file> <repo.name> <repoToken> <input-file>
+node <plugin>/scripts/review.mjs check <config-file> <repo.name> <repoToken> <input-file> <validation-id>
+```
+
+`verify` checks PR and worktree identity, fetches head/base into unique private retaining
+refs, detaches at the exact PR head, refreshes dependencies and runs configured
+prepare/verify commands. It uses the bounded process runner, records actual exits and
+logs, and attempts restoration in finally. Dirty outputs, moved branches, interruption
+or failed restoration cannot produce passing evidence. It never creates a worktree,
+changes the main checkout, merges the base, stages, commits or pushes. Preserve private
+`refs/autofix/review/<repo>/<PR>/<UUID>/` refs and logs for inspection.
+
+Receipts live in `review/records/validation/<repo>-pr<N>-<UUID>.json`; command logs live
+in `review/scratch/review-<UUID>/`. Save the returned ID/path in per-round records.
+`check` verifies head/base/config identity, exact commands, exits/deadlines, retaining
+refs, restoration and log hashes, plus fresh PR/remote-base metadata. Call it before
+posting approval when relying on local checks. CI, discussion, code review and
+acceptance criteria remain separate evidence; a successful helper is not a code review
+or merge permission. Command SIGINT/SIGTERM is recorded as failure even if cleanup
+exits zero. SIGKILL or a machine crash can leave a running receipt and preserved tree;
+it is never accepted as passed.
 
 ## Approval records
 
@@ -175,6 +248,9 @@ Malformed manifests are preserved and block registration.
   after publishing an `LGTM`. Finish binds approvals from these first.
 - `<repo>-pr<N>-<headSha>.json` - review's own per-round state (reviewed head/base,
   validation results, posted comment). Finish does not read these.
+
+Its `validation/` subdirectory also holds executable local review receipts, separate
+from approval authorization and merge-integration verification records.
 
 `<worktreeRoot>/review/scratch/` holds reports, prepared comments, verification logs and
 approval inputs. Use `/tmp` only when `review/scratch/` is unwritable, and report where.

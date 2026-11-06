@@ -193,7 +193,7 @@
             "minimum": 1,
             "maximum": 3600,
             "default": 600,
-            "description": "Per-command timeout for merge verification's install, prepare and verify commands. Runs with CI=1; timeout terminates the command process group and records failure."
+            "description": "Per-command timeout for worktree preparation, local review and merge verification's install, prepare and verify commands. Runs with CI=1; timeout terminates the command process group and records failure."
           },
           "forbidden": {
             "type": "array",

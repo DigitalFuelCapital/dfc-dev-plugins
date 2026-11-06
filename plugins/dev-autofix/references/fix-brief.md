@@ -28,7 +28,8 @@ report "verify failed: <command>" with the last lines of its output. Whether to 
 despite a failure is a human decision, never yours. Commit in imperative mood describing
 the issue{{coAuthor}}.
 
-Commits must be signed. Never pass `--no-gpg-sign`, `-c commit.gpgsign=false` or
+Commits must be signed: use `git commit -S` explicitly, even when default signing is
+unset. Never pass `--no-gpg-sign`, `-c commit.gpgsign=false` or
 `--no-verify`. If signing fails because the SSH or GPG agent is unreachable (for example
 "couldn't get agent socket" under a sandbox), retry that one git command with the sandbox
 disabled; if it still fails, stop and report "signing failed".
