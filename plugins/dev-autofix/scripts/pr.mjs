@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { checkApproval, checkWorktree, recordPR, validateConfig } from './state.mjs';
-import { checkVerifiedMerge, createRuntime as createMergeRuntime, releaseVerification, verifyMerge } from './merge.mjs';
+import { checkVerifiedMerge, createRuntime as createMergeRuntime, installIfStale, releaseVerification, verifyMerge } from './merge.mjs';
 
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -467,8 +467,6 @@ export function removeWorktree({ configFile, config, repo, token }, runtime = cr
 
 // ---------------------------------------------------------------- prepare
 
-const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund';
-
 /**
  * Create or reuse the managed worktree at the base (or a PR head), then refresh dependencies.
  * Never prunes, resets or cleans: a stale registration is reported for the skill's prune rules.
@@ -526,17 +524,9 @@ async function refreshDependencies({ config, repo, token, root, wtPath, created 
     steps.push({ phase, command, log, ...result });
     return result.exitCode === 0 && !result.signal && !result.timedOut;
   };
-  const lockfile = path.resolve(wtPath, repo.lockfile ?? 'package-lock.json');
-  const digest = fs.existsSync(lockfile) ? createHash('sha256').update(fs.readFileSync(lockfile)).digest('hex') : 'no-lockfile';
-  const hashFile = path.join(root, `${repo.name}.lock.sha`);
-  const prior = fs.existsSync(hashFile) ? fs.readFileSync(hashFile, 'utf8').trim().split(/\s+/)[0] : null;
-  const install = repo.install ?? (fs.existsSync(path.join(wtPath, 'package.json')) ? DEFAULT_INSTALL : null);
-  let installed = false, prepared = false;
-  if (install && (!fs.existsSync(path.join(wtPath, 'node_modules')) || prior !== digest)) {
-    if (!await exec('install', install)) return { ok: false, stage: 'install', path: wtPath, steps };
-    fs.writeFileSync(hashFile, `${digest}\n`);
-    installed = true;
-  }
+  const installed = await installIfStale(root, repo, wtPath, exec);
+  if (installed === false) return { ok: false, stage: 'install', path: wtPath, steps };
+  let prepared = false;
   const fingerprint = prepareFingerprint(repo);
   const done = fs.existsSync(marker) && fs.readFileSync(marker, 'utf8').trim() === fingerprint;
   if (!done && (repo.prepare ?? []).length) {
@@ -546,7 +536,7 @@ async function refreshDependencies({ config, repo, token, root, wtPath, created 
   if (!done) fs.writeFileSync(marker, `${fingerprint}\n`);
   try { checkWorktree(config, repo.name, token, git, { requireRetained: false }); }
   catch (error) { return { ok: false, stage: 'dirty', path: wtPath, error: error.message, steps }; }
-  return { ok: true, path: wtPath, created, installed, prepared, head: git(wtPath, ['rev-parse', 'HEAD']), logs: steps.map(step => step.log) };
+  return { ok: true, path: wtPath, created, installed: Boolean(installed), prepared, head: git(wtPath, ['rev-parse', 'HEAD']), logs: steps.map(step => step.log) };
 }
 
 // ---------------------------------------------------------------- land

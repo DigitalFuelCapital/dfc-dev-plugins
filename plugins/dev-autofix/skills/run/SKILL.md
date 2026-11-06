@@ -36,6 +36,11 @@ check. Require nonempty verification commands; acquire the run lock before recov
 publication and each repo lock before worktree use. Release owned locks in a finally
 step after workers stop. A busy repo is skipped, never reset.
 
+Unless `dry-run`, run [delivery preflight](../../references/workflow-state.md#delivery-preflight)
+for the selected repos before installing dependencies or launching workers:
+`node <plugin>/scripts/preflight.mjs <config-file> <repo-name ...>`. On `ok: false`, report
+the failed checks and stop before spending worker budget. Relay any `warnings`.
+
 Stop if `worktreeRoot` resolves to a path inside any `repo.path`. A worktree nested in a
 checkout gets picked up by that checkout's typecheck, lint and test globs.
 

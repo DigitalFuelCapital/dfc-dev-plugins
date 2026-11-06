@@ -219,7 +219,9 @@ written out.
 ## State checks and recovery
 
 [scripts/state.mjs](scripts/state.mjs) handles ownership, worktree checks, PR registration,
-recovery and approval evidence. [scripts/merge.mjs](scripts/merge.mjs) executes local
+recovery and approval evidence. [scripts/preflight.mjs](scripts/preflight.mjs) checks
+delivery prerequisites and [scripts/review.mjs](scripts/review.mjs) runs review's local
+checks. [scripts/merge.mjs](scripts/merge.mjs) executes local
 integration verification and records command results itself.
 [scripts/pr.mjs](scripts/pr.mjs) owns the queue (`queue next/set-status/inbox`), fix
 briefs (`brief`, from [references/fix-brief.md](references/fix-brief.md)), the push gate
@@ -244,6 +246,13 @@ the disk space they occupy, including dependencies.
 
 Durable review/approval records now live in `review/records/`; prepared comments and
 reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
+
+**Version 3.3.0:** no config changes. Version 3.3 adds delivery preflight
+(`scripts/preflight.mjs`: `gh` identity and write access, origin/base, one signing probe
+that must pass `git verify-commit`) before run and finish workers, and `scripts/review.mjs verify`, which runs review's local
+checks at the exact PR head and restores the worktree. A replaced `last-run.json` is
+archived to `<worktreeRoot>/runs/`. A failed dependency install is now retried on the next
+prepare. See [shared workflow state](references/workflow-state.md).
 
 **Version 3.2.0:** the push gate counts moved code once. A branch over the size limit
 auto-passes when its effective size (raw minus lines moved as contiguous blocks of 3+) is within the

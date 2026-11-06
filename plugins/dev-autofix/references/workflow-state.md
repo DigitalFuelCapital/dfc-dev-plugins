@@ -12,6 +12,8 @@ not continue a dependent action after failure. Shell-quote paths and arguments.
 | `state.mjs config / lock / unlock / inspect-lock / resume-lock / break-lock` | config check and lock ownership |
 | `state.mjs worktree / quarantine / list-recovery` | worktree guard and preserved recoveries |
 | `state.mjs record-pr / record-approval / approval` | manifest, approval records, approval checker |
+| `preflight.mjs <config> [repo-name ...]` | gh identity/permission, origin/base access, signing probe |
+| `review.mjs verify` | review's local checks at the exact PR head, then restore |
 | `pr.mjs prepare` | create or reuse the managed worktree, refresh dependencies |
 | `pr.mjs queue next / set-status / inbox / add-fallback` | queue selection and bookkeeping |
 | `pr.mjs brief` | render a fix worker's brief from `references/fix-brief.md` |
@@ -86,7 +88,8 @@ node <plugin>/scripts/state.mjs worktree <config-file> <repo.name> <repoToken>
 
 The helper checks ownership, root/main separation, the GitHub origin (including SSH
 HostName aliases and `ssh.github.com`), registration, clean index and tracked/untracked
-files, no active Git operation, and a branch or `refs/autofix/verify/` ref retaining
+files, no active Git operation, and a branch, `refs/autofix/verify/` or
+`refs/autofix/review/` ref retaining
 HEAD. It accepts case and URL spelling differences but rejects another host or
 repository. It never switches or discards work itself.
 
@@ -147,8 +150,8 @@ Its content is the lowercase SHA-256 digest followed by one newline, with no fil
 Compute it with `shasum -a 256 <lockfile> | awk '{print $1}'`; compare with the first
 field of the saved file, so older `shasum` output with a pathname remains readable.
 If the configured lockfile does not exist, use `no-lockfile` plus a newline. A missing
-cache requires installation when the repo has an install command. Update the cache
-only after installation succeeds. Never compare full `shasum` output with this file.
+cache requires installation when the repo has an install command. The helpers delete
+the cache before installing and rewrite it only after installation succeeds. Never compare full `shasum` output with this file.
 
 ## PR registration and recovery
 
@@ -163,9 +166,38 @@ node <plugin>/scripts/state.mjs record-pr <worktreeRoot> <startedAt> <entry-file
 
 Only the lead calls this, **serially**, while holding the run lock. Workers never write the
 manifest. The atomic upsert deduplicates by repo/number. The first registration of a run
-replaces the prior manifest; later ones append; no registrations leave it intact. On
+replaces the prior manifest (archived to `runs/<startedAt>.json`); later ones append; no
+registrations leave it intact, so report `startedAt` to show which batch is selected. On
 failure, leave the queue `pushed` and stop publication until registration succeeds.
 Malformed manifests are preserved and block registration.
+
+## Delivery preflight
+
+`preflight.mjs` resolves the `gh` login, checks the publishing host, each repo's origin,
+readable remote base and write permission, and signs one empty, unreferenced commit with
+`git commit-tree -S` in the first selected repo (signing config is normally global), then
+runs `git verify-commit` on it, the same check publish applies; an unverifiable signature
+fails preflight (for SSH, set `gpg.ssh.allowedSignersFile`). It changes no refs, index,
+files or config and pushes nothing. A gh login outside `reviewers` is a `warning`, not a
+failure. Limits: a local signature does not prove GitHub has the key on a verified
+account or that branch rules accept the push, and a connector may publish as a different
+account than `gh`. Never fix a failed check by disabling signing.
+If the signing check fails with an agent or socket error ("couldn't get agent socket",
+gpg agent unreachable), rerun preflight outside the sandbox before treating it as real. Read-only planning,
+`dry-run`, remote review and merge-only approval need no preflight.
+
+## Local review validation
+
+`review.mjs verify <config> <repo.name> <repoToken> <input-file>`, with input
+`{number,headSha,baseSha}`, runs under the repo lock. It checks worktree ownership and
+cleanliness plus PR and base identity, fetches the head into a private
+`refs/autofix/review/<repo>/pr<N>-<UUID>` ref (remote-tracking refs are left alone, since
+one may be all that retains a detached original), detaches at the exact head, installs dependencies when stale, runs prepare/verify with
+the bounded runner, re-checks PR/base freshness and restores the original checkout, then deletes the private ref. The
+receipt goes to `review/records/validation/<repo>-pr<N>-<UUID>.json` and logs to
+`review/scratch/review-<UUID>/`. If restoration fails the worktree is preserved and,
+when detached, that ref is kept (`retainedRef`) to retain it; inspect it before reuse.
+A passing receipt is not a code review or merge permission.
 
 ## Approval records
 

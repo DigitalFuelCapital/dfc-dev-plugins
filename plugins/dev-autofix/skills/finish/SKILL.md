@@ -143,7 +143,9 @@ the lockfile digest changed.
 
 Use this step for the address path, or when step 9 finds a conflict that requires a
 published resolution. Approval with a clean local integration goes directly to step 9.
-Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
+Before syncing or launching a worker (not for merge-only approvals or `dry-run`), run
+`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`; on failure, report it,
+skip this repo's source work and continue with other PRs. Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
 and requires another review; a local verification merge never gets pushed.
 
 ```bash
@@ -197,7 +199,7 @@ order. Brief:
 > Run every command in {verify}{, and `{testCommand}` for the tests covering the files you
 > touched}. All must pass. If any fails, even if you believe the failure is pre-existing,
 > stop, do not commit, and report "verify failed: <command>" with the last lines of its
-> output. Commit signed, in imperative mood, one commit per logical change{, ending with
+> output. Commit with explicit `git commit -S`, in imperative mood, one commit per logical change{, ending with
 > `Co-Authored-By: {coAuthor}` if set}. Never pass `--no-gpg-sign`,
 > `-c commit.gpgsign=false` or `--no-verify`. If signing fails because the agent is
 > unreachable, retry that one git command with the sandbox disabled; if it still fails,

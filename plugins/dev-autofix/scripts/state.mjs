@@ -179,6 +179,9 @@ export function recordPR(root, startedAt, entry, runToken) {
   const previous = fs.existsSync(file) ? read(file) : null;
   requireValue(previous === null || (nonempty(previous.startedAt) && Array.isArray(previous.prs)), 'Invalid existing manifest; preserve it for recovery');
   const manifest = previous?.startedAt === startedAt ? previous : { startedAt, prs: [] };
+  // Only the first registration rolls the batch, so a run that stops early leaves the previous
+  // batch reviewable. The replaced batch is kept as plain history.
+  if (previous && manifest !== previous) writeAtomic(path.join(root, 'runs', `${previous.startedAt.replace(/[^\w.-]/g, '-')}.json`), previous);
   const index = manifest.prs.findIndex(pr => pr.repo === entry.repo && pr.number === entry.number);
   if (index < 0) manifest.prs.push(entry);
   else manifest.prs[index] = entry;
@@ -307,7 +310,7 @@ export function checkWorktree(config, repoName, token, git = gitRead, { requireR
     const file = git(actual, ['rev-parse', '--git-path', operation]);
     requireValue(!fs.existsSync(path.resolve(actual, file)), `Worktree has an active ${operation}; preserve it`);
   }
-  requireValue(!requireRetained || git(actual, ['for-each-ref', '--contains=HEAD', '--format=%(refname)', 'refs/heads', 'refs/remotes', 'refs/autofix/verify']) !== '', 'Worktree HEAD has no retaining branch or verification ref; preserve its commits before switching');
+  requireValue(!requireRetained || git(actual, ['for-each-ref', '--contains=HEAD', '--format=%(refname)', 'refs/heads', 'refs/remotes', 'refs/autofix/verify', 'refs/autofix/review']) !== '', 'Worktree HEAD has no retaining branch or verification ref; preserve its commits before switching');
   return result;
 }
 

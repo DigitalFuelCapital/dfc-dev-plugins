@@ -12,7 +12,7 @@
       "name": "dev-autofix",
       "source": "./plugins/dev-autofix",
       "description": "Staff dev tooling - plan and run small fixes as signed draft PRs, review the full batch in Claude Code or Codex, then address findings and merge on approval",
-      "version": "3.2.0",
+      "version": "3.3.0",
       "author": {
         "name": "Digital Fuel Capital"
       }

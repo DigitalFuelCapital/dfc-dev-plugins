@@ -194,6 +194,8 @@ test('recovered PR registration starts a batch, deduplicates retries, and preser
   assert.equal(recordPR(root, started, first, runToken).prs.length, 1);
   assert.equal(recordPR(root, started, second, runToken).prs.length, 2);
   assert.deepEqual(recordPR(root, '2026-09-27T12:00:00Z', first, runToken).prs, [first]);
+  // The replaced batch is archived, not lost.
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'runs', '2026-09-26T12-00-00Z.json'))).prs.length, 2);
   assert.throws(() => recordPR(root, started, second, 'other-session'), /mismatch/);
   const file = path.join(root, 'last-run.json');
   fs.writeFileSync(file, '{interrupted');

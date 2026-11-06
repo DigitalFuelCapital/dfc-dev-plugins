@@ -74,10 +74,8 @@ Require an explicit PR to use the configured `branchPrefix` followed by `-` (def
 `fix/auto-`), and require a manifest PR's head branch to match its recorded `branch`.
 Never follow a manifest URL to a different repository.
 
-Resolve the authenticated comment author and `reviewers` (default: authenticated
-login). Use the identity of the actual publishing tool; for `gh`, `gh api user --jq
-.login`. If that author is not a configured reviewer, finish cannot consume its
-comments: complete the reviews in chat and report the mismatch without changing config.
+If the identity that will post isn't in `reviewers` (default: the `gh api user` login),
+review in chat only and report the mismatch.
 Resolve `approveTokens` (default `LGTM`, `/merge`). This skill's clean comment is always
 `LGTM`; if the configured tokens exclude it, report clean results in chat and explain
 the mismatch rather than posting a comment that finish would treat as concerns.
@@ -115,55 +113,29 @@ discussion through `gh api --paginate` for `repos/<remote>/issues/<n>/comments`,
   scenario, impact, evidence, and precise commit-pinned file/line links. Verify uncertain
   API behavior with current primary documentation or an isolated reproduction.
 
-## 3. Reuse run worktrees when local validation helps
+## 3. Validate locally with the helper
 
-The existing worktree is `<worktreeRoot>/<repo.name>`, shared by all that repo's PRs.
-Do not copy run/finish's reset, clean, sync, or cleanup commands. Review the unchanged
-PR head; merging the base would test a different commit.
+Local checks reuse `<worktreeRoot>/<repo.name>` at the unchanged PR head; never merge the
+base into it or copy run/finish's reset, clean, sync or cleanup commands. First inspect
+`repo.install`, `repo.prepare` and `repo.verify` against repository rules and
+`forbidden`: never run fix-mode commands, migrations, deployments, production writes or
+checks needing production secrets.
 
-Before using it, resolve real paths, require it to be outside every configured main
-checkout and inside `worktreeRoot`, confirm it appears in `git worktree list --porcelain`
-for `repo.path`, and confirm the origin identifies `repo.remote`. Reject a main checkout,
-unregistered path, symlink escaping the root, or another repository's worktree.
+Acquire `<worktreeRoot>/.locks/repo-<repo.name>` with the shared helper, write
+`{number,headSha,baseSha}` from the reviewed snapshot to a file under `review/scratch/`,
+then run:
 
-Acquire `<worktreeRoot>/.locks/repo-<repo.name>` using the shared helper, then run its
-worktree check before each checkout. Keep the lock through verification and restoration.
-If locked or the helper fails, use remote review for that repo; never bypass the guard.
-Release only this invocation's lock in a finally step after restoration is attempted.
+```bash
+node <plugin>/scripts/review.mjs verify <config-file> <repo.name> <repoToken> <input-file>
+```
 
-Do not share it with an active run/finish/review session. Record original branch (or
-detached state), commit, and full index/worktree status including untracked files.
-Require a clean worktree and no merge, rebase, cherry-pick, or revert in progress. If
-dirty, busy, missing, or identity cannot be verified, leave it alone and review remotely;
-do not ask to clear it, create another worktree, or block the rest of the batch.
-
-For an eligible worktree:
-
-1. Fetch the required PR/base objects from the verified remote. Check out the recorded
-   head SHA detached, without force, and require `git rev-parse HEAD` to equal it.
-   A failed checkout means remote review, not a reset.
-2. Check dependency freshness against `repo.lockfile` (default `package-lock.json`)
-   and `<worktreeRoot>/<repo.name>.lock.sha`. When `node_modules` is missing or the
-   hash differs, use the configured install command, defaulting to
-   `npm ci --ignore-scripts --no-audit --no-fund`. Inspect commands before running them;
-   retain disabled lifecycle scripts. Follow the shared
-   [dependency cache format](../../references/workflow-state.md#dependency-cache-format):
-   compare digest fields only and write the digest plus newline after success. If the
-   repo uses another dependency layout, follow its documented setup instead of assuming
-   `node_modules`. Report unavailable setup rather than claiming tests passed.
-3. Inspect `repo.prepare`, `repo.verify`, and relevant tests. Run proportionate,
-   non-interactive checks at that exact head, with any necessary safe code generation.
-   Honor `forbidden` rules; do not run fix-mode commands, migrations, deployment,
-   production writes, or tests needing production secrets. Write command logs and
-   experimental harness output under `<worktreeRoot>/review/scratch/`, never `/tmp`,
-   unless that directory is unwritable. Distinguish local checks, isolated reproductions,
-   static review, and CI evidence.
-4. In a finally-style cleanup even after failure/interruption, inspect status and
-   restore the original branch or detached commit without force. If the original branch
-   moved, or tests left changes that prevent safe restoration, preserve everything and
-   report the blocker. Never discard artifacts to restore. Verify original SHA,
-   attachment, and status; report remaining artifacts. Disable local worktree use for
-   subsequent PRs in that repo if restoration fails or the tree is no longer clean.
+It runs install plus the full prepare/verify suite, so give it a long command timeout (or
+none). It checks worktree, origin and PR identity, detaches at the exact head, runs the
+commands with deadlines, and restores the original checkout. Only `status: passed`
+counts as local evidence; keep its receipt path in this PR's record. If the lock is busy,
+the helper fails, or restoration fails (the receipt says so; never discard its
+artifacts), review remotely and stop local use for that repo. Release the lock in a
+finally step. Save any extra reproductions under `review/scratch/`, labelled separately.
 
 Remote review remains useful when local checks are unavailable. Decide whether that
 limit materially blocks readiness. Do not approve if necessary validation is incomplete,
