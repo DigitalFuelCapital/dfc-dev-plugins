@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "repo": {
+    "path": "/absolute/path/to/your/repository",
+    "remote": "DigitalFuelCapital/your-repository",
+    "baseBranch": "main",
+    "install": "npm ci --ignore-scripts --no-audit --no-fund",
+    "verify": ["npm run typecheck", "npm test -- --run"],
+    "commandTimeoutSeconds": 600,
+    "forbidden": []
+  }
+}

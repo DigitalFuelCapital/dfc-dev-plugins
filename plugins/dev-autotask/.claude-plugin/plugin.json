@@ -1,0 +1,19 @@
+{
+  "name": "dev-autotask",
+  "displayName": "Dev Autotask",
+  "description": "Plan and complete one large development task as one PR, optionally starting from a cross-verified security audit (infiltrate). Claude audits, plans, implements and addresses findings; Codex reviews with $task-review; merge only on an explicit request.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Digital Fuel Capital"
+  },
+  "license": "MIT",
+  "keywords": [
+    "development",
+    "planning",
+    "task",
+    "pull-request",
+    "worktree",
+    "review",
+    "security"
+  ]
+}

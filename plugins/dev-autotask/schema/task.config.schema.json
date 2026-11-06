@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dev-autotask.config.json",
+  "description": "One repository for the dev-autotask workflow. Looked up from the current directory upward, then ~/.claude/dev-autotask.config.json.",
+  "type": "object",
+  "required": ["version", "repo"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "repo": {
+      "type": "object",
+      "required": ["path", "remote", "baseBranch", "verify"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "pattern": "^/", "description": "Absolute path to the main checkout. Never switched or edited; task work happens in a separate worktree." },
+        "remote": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", "description": "GitHub owner/repository for PR operations." },
+        "baseBranch": { "type": "string", "pattern": "\\S", "description": "Branch the task starts from and its PR targets." },
+        "install": { "type": "string", "pattern": "\\S", "description": "Optional dependency install command, run before verify on every verification (e.g. npm ci --ignore-scripts)." },
+        "verify": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "\\S" }, "description": "Non-interactive check commands, run in order with CI=1. The first failure stops the run." },
+        "env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" }, "description": "Extra environment variable names (never values) passed through from the caller to install/verify commands, e.g. DATABASE_URL or NPM_TOKEN." },
+        "commandTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 600, "description": "Per-command deadline; the command's process group is killed when it expires." },
+        "forbidden": { "type": "array", "items": { "type": "string", "pattern": "\\S" }, "description": "Repository-specific hard rules every phase must follow." }
+      }
+    },
+    "worktreeRoot": { "type": "string", "pattern": "^(/|~/)", "default": "~/.claude/dev-autotask", "description": "Where task records and worktrees live; must be outside repo.path." }
+  }
+}
