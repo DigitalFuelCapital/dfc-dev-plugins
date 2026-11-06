@@ -12,26 +12,29 @@ Invoke as `$task-review [pr]` in Codex or `/dev-autotask:task-review [pr]` in Cl
 `git`, `gh` and `node`. Do not edit, commit or push the PR branch, approve formally,
 or merge. The only write to GitHub is one PR comment.
 
-1. **Config.** Run `node <plugin>/scripts/state.mjs config`. It finds
-   `dev-autotask.config.json` from the current directory upward, then in
-   `~/.claude/`. Use `repo.remote` for every `gh` call.
+1. **Config.** The config is the shared `autofix.config.json`, found from the current
+   directory upward, then in `~/.claude/`. If the PR was given as a URL or
+   `owner/repo#n`, run `node <plugin>/scripts/state.mjs --remote <owner/repo> config`;
+   otherwise `... config` selects the repo containing the current directory or the only
+   one (if it lists several repos, ask which, then `--repo <name>`). Use `repo.remote` for
+   every `gh` call and `repo.name` below.
 2. **PR.** Use the argument. Without one, list open PRs
    (`gh pr list --repo <remote> --json number,headRefName`) whose branch starts with
    `dev/autotask-`; use it if there is exactly one, otherwise ask.
 3. **Context.** `gh pr view <n> --repo <remote> --json
    number,title,body,state,headRefName,headRefOid,baseRefName,url` and note `headRefOid`
    as the reviewed head. The plan is in the PR body's "Plan" section; if missing, read
-   `<root>/tasks/<owner>/<repo>/<id>/plan.md` (root from the config output, id = branch
-   without `dev/autotask-`). Read all PR comments (`gh pr view <n> --repo <remote>
-   --comments`) so earlier findings are re-checked.
+   `<root>/tasks/<owner>/<repo>/<id>/plan.md` (root from the config output, lowercase
+   `repo.remote`, id = branch without `dev/autotask-`). Read all PR comments (`gh pr
+   view <n> --repo <remote> --comments`) so earlier findings are re-checked.
 4. **Review.** Read `gh pr diff <n> --repo <remote>` in full, then the surrounding code
    it touches. Check every acceptance criterion and every earlier finding. Report only
    real, actionable problems: correctness, missed criteria, security, data loss, broken
    compatibility, missing tests for changed behavior. No style nits.
 5. **Checks.** Run them in a temporary checkout of the exact head:
    `git -C <repo.path> fetch origin <headRefName>`, `git -C <repo.path> worktree add
-   --detach <tmp> <headRefOid>`, then `node <plugin>/scripts/verify.mjs <tmp> <file>`
-   (`file` from the step 1 config output; discovery from `<tmp>` would miss it) with a
+   --detach <tmp> <headRefOid>`, then `node <plugin>/scripts/verify.mjs <tmp> <file>
+   <repo.name>` (`file` from the step 1 config output; discovery from `<tmp>` would miss it) with a
    long command timeout (30+ minutes; it runs install and every verify command), then
    `git -C <repo.path> worktree remove --force <tmp>`. Also note `gh pr checks <n>
    --repo <remote>`. If you cannot run the checks (sandbox, missing tools, network),

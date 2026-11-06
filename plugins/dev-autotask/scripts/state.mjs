@@ -1,17 +1,21 @@
 // Task records for dev-autotask. Git and GitHub are driven by the skills; this only
-// finds the config, derives paths and keeps task.json.
+// reads the shared autofix.config.json, picks the repo, derives paths and keeps task.json.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const CONFIG = 'dev-autotask.config.json';
+// KEY-DECISION 2026-11-06: reuse dev-autofix's config (one file per workspace, a `repos`
+// list) instead of a per-repo dev-autotask config; autotask-only settings are defaults.
+const CONFIG = 'autofix.config.json';
+export const ROOT = '~/.claude/dev-autotask';
 const need = (ok, message) => { if (!ok) throw new Error(message); };
 const text = value => typeof value === 'string' && value.trim() !== '';
+const list = (value, ok = text) => value === undefined || (Array.isArray(value) && value.every(ok));
 const expand = value => value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
-const inside = (parent, child) => !path.relative(parent, child).startsWith('..');
+const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
 // Real path, resolving symlinks; for a path that does not exist yet, the nearest existing
-// ancestor's real path plus the rest, so a symlinked worktreeRoot cannot hide inside repo.path.
+// ancestor's real path plus the rest, so a symlinked root cannot hide inside a checkout.
 const real = p => {
   const missing = [];
   for (let dir = path.resolve(p); ; dir = path.dirname(dir)) {
@@ -21,7 +25,7 @@ const real = p => {
   }
 };
 
-// Nearest dev-autotask.config.json from `start` upward, else ~/.claude/<name>.
+// Nearest autofix.config.json from `start` upward, else ~/.claude/autofix.config.json.
 export function findConfig(start = process.cwd()) {
   for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
     if (fs.existsSync(path.join(dir, CONFIG))) return path.join(dir, CONFIG);
@@ -32,83 +36,168 @@ export function findConfig(start = process.cwd()) {
   return home;
 }
 
-export function loadConfig(file = findConfig()) {
-  const config = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const repo = config?.repo;
-  need(config?.version === 1 && repo, `${file}: expected version 1 and a repo`);
-  need(text(repo.path) && path.isAbsolute(repo.path), 'repo.path must be absolute');
-  need(/^[\w.-]+\/[\w.-]+$/.test(repo.remote ?? ''), 'repo.remote must be owner/repo');
-  need(text(repo.baseBranch), 'repo.baseBranch is required');
-  need(Array.isArray(repo.verify) && repo.verify.length && repo.verify.every(text), 'repo.verify needs at least one command');
-  need(repo.install === undefined || text(repo.install), 'repo.install must be a command');
-  need(repo.env === undefined || (Array.isArray(repo.env) && repo.env.every(n => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n))), 'repo.env must be a list of variable names');
+function checkRepo(repo, file) {
+  const at = `${file}: repo ${repo?.name}`;
+  need(/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(repo?.name ?? ''), `${file}: every repo needs a name`);
+  need(text(repo.path) && path.isAbsolute(repo.path), `${at}: path must be absolute`);
+  need(/^[\w.-]+\/[\w.-]+$/.test(repo.remote ?? ''), `${at}: remote must be owner/repo`);
+  need(text(repo.baseBranch), `${at}: baseBranch is required`);
+  need(Array.isArray(repo.verify) && repo.verify.length && repo.verify.every(text), `${at}: verify needs at least one command`);
+  need(repo.install === undefined || text(repo.install), `${at}: install must be a command`);
+  need(list(repo.prepare), `${at}: prepare must be a list of commands`);
+  need(list(repo.forbidden, s => typeof s === 'string'), `${at}: forbidden must be a list`);
+  need(list(repo.env, n => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)), `${at}: env must be a list of variable names`);
   const seconds = repo.commandTimeoutSeconds ?? 600;
-  need(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, 'commandTimeoutSeconds must be 1-3600');
-  const root = expand(config.worktreeRoot ?? '~/.claude/dev-autotask');
-  need(path.isAbsolute(root), 'worktreeRoot must be absolute or start with ~/');
-  need(!inside(real(repo.path), real(root)), 'worktreeRoot must be outside repo.path');
-  return { ...config, file: path.resolve(file), root, repo: { ...repo, commandTimeoutSeconds: seconds } };
+  need(Number.isInteger(seconds) && seconds >= 1 && seconds <= 3600, `${at}: commandTimeoutSeconds must be 1-3600`);
+  return { ...repo, install: repo.install ?? null, prepare: repo.prepare ?? [], env: repo.env ?? [], forbidden: repo.forbidden ?? [], commandTimeoutSeconds: seconds };
 }
 
-export function taskPaths(config, id) {
+// Picks one repo: by name, by GitHub remote, the one whose checkout contains cwd, or the
+// only one. Anything else is ambiguous and must be asked, never guessed.
+export function selectRepo(repos, file, { repo: name, remote, cwd = process.cwd() } = {}) {
+  const names = repos.map(r => r.name).join(', ');
+  if (name) {
+    const hit = repos.find(r => r.name === name);
+    need(hit, `No repo named ${name} in ${file}; repos: ${names}`);
+    return hit;
+  }
+  if (remote) {
+    const hits = repos.filter(r => r.remote.toLowerCase() === remote.toLowerCase());
+    need(hits.length === 1, `${hits.length ? 'Several repos' : 'No repo'} with remote ${remote} in ${file}; repos: ${names}`);
+    return hits[0];
+  }
+  const here = real(cwd);
+  const containing = repos.filter(r => inside(real(r.path), here)).sort((a, b) => real(b.path).length - real(a.path).length);
+  if (containing.length) return containing[0];
+  need(repos.length === 1, `Several repos in ${file}: ${names}. Name one (--repo <name>).`);
+  return repos[0];
+}
+
+// The config's repos, validated, plus the selected one as `repo`. `root` holds every task,
+// worktree and audit and must resolve outside every configured checkout.
+export function loadConfig(file = findConfig(), options = {}) {
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+  need(config?.version === 1 && Array.isArray(config.repos) && config.repos.length, `${file}: expected version 1 and a repos list`);
+  need(list(config.forbidden, s => typeof s === 'string'), `${file}: forbidden must be a list`);
+  const repos = config.repos.map(repo => checkRepo(repo, file));
+  need(new Set(repos.map(r => r.name)).size === repos.length, `${file}: repo names must be unique`);
+  const root = expand(options.root ?? ROOT);
+  need(path.isAbsolute(root), 'The dev-autotask root must be absolute');
+  for (const r of repos) need(!inside(real(r.path), real(root)), `${root} must be outside every repo checkout (it is inside ${r.name})`);
+  const repo = selectRepo(repos, file, options);
+  return { file: path.resolve(file), root, forbidden: config.forbidden ?? [], repos: repos.map(r => r.name), repo };
+}
+
+// Tasks are namespaced by GitHub repository, like their branches.
+export function taskPaths(root, remote, id) {
   need(/^[a-z0-9][a-z0-9-]{0,63}$/.test(id ?? ''), 'Task ID must be a lowercase slug (max 64)');
-  const repo = config.repo.remote.toLowerCase();
-  const taskDir = path.join(config.root, 'tasks', repo, id);
+  const ns = remote.toLowerCase();
+  const taskDir = path.join(root, 'tasks', ns, id);
   return {
     taskDir, record: path.join(taskDir, 'task.json'), plan: path.join(taskDir, 'plan.md'),
-    worktree: path.join(config.root, 'worktrees', repo, id), branch: `dev/autotask-${id}`,
+    worktree: path.join(root, 'worktrees', ns, id), branch: `dev/autotask-${id}`,
   };
 }
 
 const write = (file, task) => fs.writeFileSync(file, `${JSON.stringify(task, null, 2)}\n`);
-export const showTask = (config, id) => JSON.parse(fs.readFileSync(taskPaths(config, id).record, 'utf8'));
+const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
 export function createTask(config, id, title) {
   need(text(title), 'A task title is required');
-  const p = taskPaths(config, id);
-  need(!fs.existsSync(p.record), `Task ${id} already exists; resume it instead`);
+  const { repo } = config;
+  const p = taskPaths(config.root, repo.remote, id);
+  need(!fs.existsSync(p.record), `Task ${id} already exists for ${repo.remote}; resume it instead`);
   fs.mkdirSync(p.taskDir, { recursive: true });
-  // config: the file this task was created from; verify.mjs gets it explicitly, since
-  // discovery from a worktree outside the checkout would miss it or find another config.
-  const task = { id, title, config: config.file, repo: config.repo.remote, baseBranch: config.repo.baseBranch, branch: p.branch, worktree: p.worktree, pr: null, progress: [] };
+  // config + repo: verify.mjs gets both explicitly, since discovery from a worktree
+  // outside the checkout would miss the config or pick another repo.
+  const task = { id, title, config: config.file, repo: repo.name, remote: repo.remote, baseBranch: repo.baseBranch, branch: p.branch, worktree: p.worktree, pr: null, progress: [] };
   write(p.record, task);
   return { ...task, plan: p.plan };
 }
 
-export function setPR(config, id, number) {
-  const task = showTask(config, id);
+// A 1.0 task.json has no `remote` and points at dev-autotask.config.json; it is never
+// resumed or listed, only reported by locate().
+const legacy = task => typeof task?.remote !== 'string' || path.basename(String(task.config)) !== CONFIG;
+function scan(root) {
+  const dir = path.join(expand(root), 'tasks');
+  const dirs = p => fs.existsSync(p) ? fs.readdirSync(p, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name) : [];
+  const found = [];
+  for (const owner of dirs(dir)) {
+    for (const name of dirs(path.join(dir, owner))) {
+      for (const id of dirs(path.join(dir, owner, name))) {
+        const record = path.join(dir, owner, name, id, 'task.json');
+        if (fs.existsSync(record)) found.push({ id, record, task: read(record) });
+      }
+    }
+  }
+  return found;
+}
+
+// Every current task under root, optionally only one GitHub repository's. Repo names are
+// aliases local to one config, so callers resolve them to a remote first (see main).
+export function listTasks({ root = ROOT, remote } = {}) {
+  return scan(root)
+    .filter(({ task }) => !legacy(task) && (!remote || task.remote.toLowerCase() === remote.toLowerCase()))
+    .map(({ id, record, task }) => ({ id, repo: task.repo, remote: task.remote, title: task.title, pr: task.pr, record }));
+}
+
+function locate(id, options) {
+  taskPaths('/', 'o/r', id); // validates the ID
+  const hits = listTasks(options).filter(t => t.id === id);
+  need(hits.length || !scan(options.root ?? ROOT).some(t => t.id === id && legacy(t.task)), `Task ${id} was created by dev-autotask 1.0; re-plan it with /dev-autotask:plan`);
+  need(hits.length, `No task ${id}${options.remote ? ` for ${options.remote}` : ''}`);
+  need(hits.length === 1, `Task ${id} exists for several repos (${hits.map(t => t.remote).join(', ')}); pass --repo <name>`);
+  return hits[0].record;
+}
+
+// The task plus its plan path and, from its recorded config, the checkout path and rules.
+// Fails if that config no longer maps the task's repo name to the same remote.
+export function showTask(id, options = {}) {
+  const task = read(locate(id, options));
+  const config = loadConfig(task.config, { root: options.root, repo: task.repo });
+  need(config.repo.remote.toLowerCase() === task.remote.toLowerCase(), `${task.config}: repo ${task.repo} is now ${config.repo.remote}, not ${task.remote}`);
+  return { ...task, plan: taskPaths(config.root, task.remote, id).plan, path: config.repo.path, forbidden: [...config.forbidden, ...config.repo.forbidden] };
+}
+
+function update(id, options, change) {
+  const record = locate(id, options);
+  const task = read(record);
+  change(task);
+  write(record, task);
+  return task;
+}
+
+export const setPR = (id, number, options = {}) => update(id, options, task => {
   const pr = Number(number);
   need(Number.isInteger(pr) && pr > 0, 'PR must be a positive number');
   need(task.pr === null || task.pr === pr, `Task already has PR #${task.pr}; keep one PR per task`);
   task.pr = pr;
-  write(taskPaths(config, id).record, task);
-  return task;
-}
+});
 
-export function addProgress(config, id, note) {
+export const addProgress = (id, note, options = {}) => update(id, options, task => {
   need(text(note), 'Progress note is required');
-  const task = showTask(config, id);
   task.progress.push({ at: new Date().toISOString(), note });
-  write(taskPaths(config, id).record, task);
-  return task;
-}
+});
 
-export function listTasks(config) {
-  const dir = path.join(config.root, 'tasks', config.repo.remote.toLowerCase());
-  return fs.existsSync(dir) ? fs.readdirSync(dir).filter(id => fs.existsSync(path.join(dir, id, 'task.json'))) : [];
-}
-
-const USAGE = 'Usage: state.mjs config | list | paths <id> | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note>';
-function main([command, id, ...rest]) {
-  const config = loadConfig();
+const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note>';
+function main(argv) {
+  const options = {}, args = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--repo' || argv[i] === '--remote') options[argv[i].slice(2)] = argv[++i];
+    else args.push(argv[i]);
+  }
+  need(!('repo' in options && 'remote' in options) && Object.values(options).every(text), USAGE);
+  const [command, id, ...rest] = args;
+  // Task lookups never match the alias itself: it is resolved through this workspace's
+  // config to a remote, so another workspace's same-named repo cannot be picked.
+  const scope = { remote: options.repo ? loadConfig(findConfig(), options).repo.remote : options.remote };
   switch (command) {
-    case 'config': return config;
-    case 'list': return listTasks(config);
-    case 'paths': return taskPaths(config, id);
-    case 'show': return showTask(config, id);
-    case 'create': return createTask(config, id, rest.join(' '));
-    case 'pr': return setPR(config, id, rest[0]);
-    case 'progress': return addProgress(config, id, rest.join(' '));
+    case 'config': return loadConfig(findConfig(), options);
+    case 'create': return createTask(loadConfig(findConfig(), options), id, rest.join(' '));
+    case 'list': return listTasks(scope);
+    case 'show': return showTask(id, scope);
+    case 'pr': return setPR(id, rest[0], scope);
+    case 'progress': return addProgress(id, rest.join(' '), scope);
     default: throw new Error(USAGE);
   }
 }

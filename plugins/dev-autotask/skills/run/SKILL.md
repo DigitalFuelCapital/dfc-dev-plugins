@@ -2,7 +2,7 @@
 name: run
 description: Implement an approved dev-autotask plan in its own worktree, verify it, push, and open one draft PR. Resumes an interrupted task. Stops for review; never merges.
 disable-model-invocation: true
-argument-hint: "<task-id>"
+argument-hint: "[repo:]<task-id>"
 ---
 
 # Implement the planned task
@@ -12,24 +12,26 @@ argument-hint: "<task-id>"
 It authorizes the task worktree and branch, commits, pushing that branch, and one draft
 PR. Never push to the base branch, never force-push, never merge.
 
-1. **Load.** `<state> show <id>` (use `<state> list` and ask if no ID was given) and
-   read `plan.md` from `<state> paths <id>`. If the plan has open questions, ask them
+1. **Load.** `<state> show <id>` (with `--repo <repo>` for a `<repo>:<id>` argument, or if
+   it reports several repos; `<state> list` and ask if no ID was given). It prints the
+   task with its `plan` path, checkout `path`, `remote` and `forbidden` rules, read from
+   the task's recorded `config`. Read the plan. If the plan has open questions, ask them
    first. If `task.pr` is set and every milestone is done, report the PR and stop;
    review findings are handled by `finish`.
 2. **Worktree.** If `task.worktree` exists, resume there: keep uncommitted work and
-   read `task.progress`. Otherwise run `git -C <repo.path> fetch origin` (allow at
-   least 120s), then `git -C <repo.path> worktree add -b <branch> <worktree>
+   read `task.progress`. Otherwise run `git -C <task.path> fetch origin` (allow at
+   least 120s), then `git -C <task.path> worktree add -b <branch> <worktree>
    origin/<baseBranch>`, or `git worktree add <worktree> <branch>` if the branch
    already exists. Never switch or edit the main checkout.
 3. **Implement** the milestones in order inside the worktree. Follow the repository's
-   instructions, `repo.forbidden`, and its commit-signing rules. Add tests for the
+   instructions, `task.forbidden`, and its commit-signing rules. Add tests for the
    acceptance criteria. Commit each milestone with explicit paths, then record it:
-   `<state> progress <id> "<what was done>"`.
-4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree> <task.config>` runs the
-   configured install and verify commands. Always pass the recorded config; discovery
-   from the worktree would miss it. Give it a long timeout (install plus every verify
-   command can take many minutes). Fix failures and re-run until it passes. Do not publish failing
-   work. Read the full diff against `origin/<baseBranch>` for scope, secrets and stray
+   `<state> --remote <task.remote> progress <id> "<what was done>"`.
+4. **Verify.** `node <plugin>/scripts/verify.mjs <worktree> <task.config> <task.repo>`
+   runs that repo's configured install, prepare and verify commands. Always pass the
+   recorded config and repo; discovery from the worktree would miss them. Give it a long
+   timeout (install plus every verify command can take many minutes). Fix failures and
+   re-run until it passes. Do not publish failing work. Read the full diff against `origin/<baseBranch>` for scope, secrets and stray
    generated files.
 5. **Publish.** If `plan.md` has a `Source: infiltrate` line, first run `gh repo view
    <remote> --json visibility`; unless it is `PRIVATE` (or `INTERNAL`), stop and ask the
@@ -41,7 +43,7 @@ PR. Never push to the base branch, never force-push, never merge.
    `gh pr create --draft --repo <remote> --base <baseBranch> --head <branch> --title
    <title> --body-file <file>`. The body summarizes the change and verification, then
    includes `plan.md` inside `<details><summary>Plan</summary>...</details>` so the
-   reviewer has it. Record the number: `<state> pr <id> <number>`.
+   reviewer has it. Record the number: `<state> --remote <task.remote> pr <id> <number>`.
 6. **Stop.** Report the PR URL, milestones done and verification result. Tell the user
    to review it in Codex with `$task-review <number>` (or `/dev-autotask:task-review <number>`),
    then run `/dev-autotask:finish <id>`. Do not review it yourself.

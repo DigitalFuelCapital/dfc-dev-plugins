@@ -1,10 +1,13 @@
-// Runs the configured install command (if any), then each verify command, in <dir>.
+// Runs the selected repo's install, prepare and verify commands, in order, in <dir>.
 // Output streams through; stops at the first failure. Exit code 0 only if all pass.
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './state.mjs';
+
+export const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund'; // autofix's default
 
 // KEY-DECISION 2026-11-06: commands get a minimal environment, not process.env, so repo
 // scripts (and security regression tests) never see the caller's tokens or credentials.
@@ -12,7 +15,7 @@ import { loadConfig } from './state.mjs';
 const PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TERM', 'LANG', 'LC_ALL', 'TZ',
   'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'npm_config_cache', 'NPM_CONFIG_CACHE', 'NVM_DIR', 'VOLTA_HOME',
   'PNPM_HOME', 'COREPACK_HOME', 'YARN_CACHE_FOLDER'];
-// repo.env names extra variables to pass through (e.g. DATABASE_URL); values never live in config.
+// repo.env (an optional autofix.config.json repo field) names extra variables to pass through (e.g. DATABASE_URL); values never live in config.
 export const commandEnv = (source = process.env, extra = []) =>
   ({ ...Object.fromEntries([...PASS, ...extra].filter(k => source[k] !== undefined).map(k => [k, source[k]])), CI: '1' });
 
@@ -52,7 +55,10 @@ export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = com
 }
 
 export async function verify(config, dir, { stdio = 'inherit', log = console.error } = {}) {
-  const commands = [config.repo.install, ...config.repo.verify].filter(Boolean);
+  // Same rule as dev-autofix's installIfStale: no install configured means the default
+  // npm install only when the checkout has a package.json, otherwise none.
+  const install = config.repo.install ?? (fs.existsSync(path.join(dir, 'package.json')) ? DEFAULT_INSTALL : null);
+  const commands = [install, ...config.repo.prepare, ...config.repo.verify].filter(Boolean);
   const results = [];
   for (const command of commands) {
     if (cancelled) break;
@@ -74,7 +80,7 @@ export async function verify(config, dir, { stdio = 'inherit', log = console.err
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const [dir, configFile] = process.argv.slice(2);
+  const [dir, configFile, repo] = process.argv.slice(2);
   // Cancelling the helper stops the running command's group before exiting, and fails.
   // Signal listeners do not keep Node alive, so normal completion is unaffected.
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
@@ -92,8 +98,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     });
   }
   try {
-    if (!dir) throw new Error('Usage: verify.mjs <dir> [config-file]');
-    const { passed } = await verify(configFile ? loadConfig(configFile) : loadConfig(), path.resolve(dir));
+    // Both explicit: the task's recorded config and repo name, never rediscovered from <dir>.
+    if (!dir || !configFile || !repo) throw new Error('Usage: verify.mjs <dir> <config-file> <repo-name>');
+    const { passed } = await verify(loadConfig(configFile, { repo }), path.resolve(dir));
     process.exitCode = passed ? 0 : 1;
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
