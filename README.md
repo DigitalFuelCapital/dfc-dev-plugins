@@ -32,6 +32,36 @@ codex plugin add dev-autotask@dfc-dev-plugins
 Start a new Codex thread after installing. More Codex detail:
 [dev-autofix](plugins/dev-autofix/README.md#codex), [dev-autotask](plugins/dev-autotask/README.md#codex).
 
+## Reviewing in Codex with checks
+
+Codex's default sandbox blocks network access, so a review can't install dependencies.
+It still works, but posts `Checks: not run`, and merging then relies on GitHub CI. To let
+reviews run lint, typecheck and tests themselves, start review sessions with network
+enabled, leaving everyday `codex` sessions unchanged.
+
+1. Add this alias to `~/.zshrc`:
+
+   ```bash
+   # Codex with network in the workspace-write sandbox (for $review / $task-review)
+   alias codex-review='codex -c sandbox_mode="\"workspace-write\"" -c sandbox_workspace_write.network_access=true'
+   ```
+
+2. Reload your shell with `source ~/.zshrc`, or open a new terminal.
+3. From the repo being reviewed (or the folder that holds `autofix.config.json`), start
+   a review session and run the review skill:
+
+   ```bash
+   cd ~/path/to/repo
+   codex-review
+   ```
+
+   Then, in that session: `$task-review <PR URL>` for dev-autotask, or `$review` for a
+   dev-autofix batch.
+
+The network setting lasts only for that session. With network on, the repo's install,
+lint and test scripts can make outbound connections, so use `codex-review` for repos and
+PRs you trust and plain `codex` for everything else.
+
 ## Update
 
 Neither tool updates automatically. After a release is merged, update **both**, or Codex
