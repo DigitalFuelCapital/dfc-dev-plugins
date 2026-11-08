@@ -18,9 +18,9 @@
 
   "repos": [
     {
-      "name": "dfc-tools",
-      "path": "/Users/you/Documents/GitHub/DigitalFuelCapital/DFC/dfc-tools",
-      "remote": "DigitalFuelCapital/dfc-tools",
+      "name": "my-app",
+      "path": "/Users/you/code/my-app",
+      "remote": "your-org/my-app",
       "baseBranch": "staging",
       "verify": ["npm run lint", "npm run format:check", "npm run test"],
       "testCommand": "npx vitest run {files}",
@@ -31,9 +31,9 @@
       ]
     },
     {
-      "name": "dfc-cro",
-      "path": "/Users/you/Documents/GitHub/DigitalFuelCapital/DFC/dfc-cro",
-      "remote": "DigitalFuelCapital/dfc-cro",
+      "name": "my-api",
+      "path": "/Users/you/code/my-api",
+      "remote": "your-org/my-api",
       "baseBranch": "staging",
       "verify": ["npm run lint", "npm run typecheck", "npm run typecheck:functions", "npm run test"]
     }

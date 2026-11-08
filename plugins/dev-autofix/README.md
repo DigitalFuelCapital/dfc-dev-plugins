@@ -1,7 +1,7 @@
 # Dev Autofix
 
 Spends **leftover Claude subscription budget** on small, safe code fixes, landed as signed
-draft PRs, then acts on your review of them. Staff dev tooling; not for client installs.
+draft PRs, then acts on your review of them.
 
 The weekly budget resets whether or not you use it. If the window is at 60% on a Friday,
 the other 40% expires. Autofix turns that into reviewed draft PRs for work you already
@@ -106,10 +106,10 @@ Useful arguments:
 /dev-autofix:run reserve=25      # leave a quarter of the week untouched
 /dev-autofix:run max=2           # cap at two PRs
 /dev-autofix:run dry-run         # pick candidates and print the briefs, change nothing
-/dev-autofix:run dfc-tools       # one repo only
+/dev-autofix:run my-app          # one repo only
 /dev-autofix:run model=haiku     # cheaper fix workers
 /dev-autofix:review             # the full last-run batch; Codex: $review
-/dev-autofix:review dfc-tools    # review one repo's PRs from the last run
+/dev-autofix:review my-app       # review one repo's PRs from the last run
 /dev-autofix:review pr=42        # explicit PR; qualify with a repo if ambiguous
 /dev-autofix:review review-only # review in chat, no GitHub comments
 /dev-autofix:finish dry-run      # show which PRs would be addressed vs merged
@@ -119,12 +119,12 @@ Useful arguments:
 ## Configuration
 
 `/dev-autofix:init` writes `autofix.config.json` at the workspace root (the common parent of
-the repos, for example `DFC/`), validated by [the schema](schema/autofix.config.schema.json).
-A worked DFC example is in [examples/autofix.config.json](examples/autofix.config.json).
+the repos, for example `~/code/`), validated by [the schema](schema/autofix.config.schema.json).
+A worked example is in [examples/autofix.config.json](examples/autofix.config.json).
 
 The fields that matter most:
 
-- **`baseBranch`** - what PRs target. The integration branch (`staging` in most DFC repos),
+- **`baseBranch`** - what PRs target. The integration branch (for example `staging`),
   never production.
 - **`verify`** - required nonempty commands that must pass before a PR opens or merges.
   Fast and non-interactive;
@@ -185,8 +185,8 @@ worktree registrations can be pruned before recreating a deleted tree.
 deterministic gate passes on the branch:
 
 - no touched `.gitignore`, `.env*`, lockfile, `package.json`, `.github/`, git hook, script
-  file or build/lint tool config (the files the 2026 dev-environment malware campaign
-  plants itself in)
+  file or build/lint tool config (files commonly targeted by supply-chain
+  malware)
 - diff within the size cap
 - no added line matching a known malware signature or a `blockPatterns` entry - a match
   stops the whole run and flags the machine as suspect

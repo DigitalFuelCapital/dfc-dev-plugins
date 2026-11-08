@@ -56,7 +56,7 @@ Read `<worktreeRoot>/last-run.json` once and retain the snapshot for this pass:
 {
   "startedAt": "2026-09-26T12:00:00Z",
   "prs": [
-    {"repo": "dfc-tools", "number": 42, "branch": "fix/auto-20260926-example", "url": "https://github.com/DigitalFuelCapital/dfc-tools/pull/42"}
+    {"repo": "my-app", "number": 42, "branch": "fix/auto-20260926-example", "url": "https://github.com/your-org/my-app/pull/42"}
   ]
 }
 ```
