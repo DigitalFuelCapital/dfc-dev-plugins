@@ -1,12 +1,22 @@
 # dfc-dev-plugins
 
 Digital Fuel Capital developer tooling, packaged as a Claude Code plugin marketplace (also
-installable from Codex). Private for now.
+installable from Codex).
 
 | Plugin | What it does |
 |---|---|
 | [`dev-autofix`](plugins/dev-autofix/README.md) | Plan and run small, pre-verified fixes as signed draft PRs on leftover subscription budget, review the batch, then address findings or merge on approval. |
 | [`dev-autotask`](plugins/dev-autotask/README.md) | One large task as one PR, optionally starting from a cross-verified local security audit (`infiltrate`): Claude plans, implements and addresses findings; Codex reviews (`$task-review`). Merges only on explicit request. |
+
+## Assumptions
+
+These plugins encode one team's workflow and expect:
+
+- signed commits (SSH or GPG) and `gh` authenticated against your repos
+- an integration branch such as `staging` that PRs target, never production
+- Codex installed alongside Claude Code, as the main reviewer
+- for `dev-autofix`, a Claude subscription whose leftover budget it spends (see
+  [the status line setup](plugins/dev-autofix/statusline/README.md))
 
 ## Install
 

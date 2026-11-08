@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Private Claude Code plugin marketplace for DFC developer tooling. Plugins: `dev-autofix`,
+Claude Code plugin marketplace for DFC developer tooling. Plugins: `dev-autofix`,
 `dev-autotask`. Split out of `DigitalFuelCapital/dfc-claude-plugin` (history preserved) so it
 can evolve and be shared independently of the client-facing DFC plugins.
 
