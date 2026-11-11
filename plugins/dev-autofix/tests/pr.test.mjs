@@ -212,7 +212,15 @@ test('finish gate checks only commits added on top of the remote PR head', t => 
   assert.equal(ok.ok, true, JSON.stringify(ok.failures));
   assert.equal(ok.commits.length, 1);
   f.commit({ 'd.js': 'eval(x)\n' });
-  const bad = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
+  const risky = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
+  // A risky construct blocks the branch but is not a malware signature: the run carries on.
+  assert.equal(risky.ok, false);
+  assert.equal(risky.malware, false);
+  assert.deepEqual([...new Set(risky.failures.map(item => item.check))], ['risky']);
+  const allowed = gate({ config: { ...f.config, disabledPatterns: ['eval'] }, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
+  assert.equal(allowed.ok, true, JSON.stringify(allowed.failures));
+  f.commit({ 'e.js': "fetch('https://api.trongrid.io/x')\n" });
+  const bad = gate({ config: { ...f.config, disabledPatterns: ['eval'] }, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
   assert.equal(bad.malware, true);
 });
 
