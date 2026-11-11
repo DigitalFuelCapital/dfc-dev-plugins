@@ -75,7 +75,7 @@ export async function verifyReview(config, name, token, input, runtime = createR
       uninterrupted();
       result.stage = phase;
       const log = path.join(logs, `${result.commands.length}.log`);
-      const execution = await runtime.run(command, worktree.path, log, (repo.commandTimeoutSeconds ?? 600) * 1000);
+      const execution = await runtime.run(command, worktree.path, log, (repo.commandTimeoutSeconds ?? 600) * 1000, repo.env ?? []);
       result.commands.push({ phase, command, ...execution, log, logHash: hash(fs.readFileSync(log)) });
       uninterrupted();
       requireValue(!execution.timedOut && execution.exitCode === 0 && !execution.signal, `${phase} command failed or timed out; see ${log}`);

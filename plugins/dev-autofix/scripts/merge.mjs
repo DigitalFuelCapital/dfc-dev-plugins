@@ -13,12 +13,23 @@ const shaOK = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value)
 const uuidOK = value => typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value);
 const rootPath = config => fs.realpathSync((config.worktreeRoot ?? '~/.claude/autofix/worktrees').replace(/^~\//, `${os.homedir()}/`));
 const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
-const contract = repo => ({ remote: repo.remote, baseBranch: repo.baseBranch, install: repo.install ?? null, lockfile: repo.lockfile ?? 'package-lock.json', prepare: repo.prepare ?? [], verify: repo.verify, commandTimeoutSeconds: repo.commandTimeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_SECONDS });
+const contract = repo => ({ remote: repo.remote, baseBranch: repo.baseBranch, install: repo.install ?? null, lockfile: repo.lockfile ?? 'package-lock.json', prepare: repo.prepare ?? [], verify: repo.verify, env: repo.env ?? [], commandTimeoutSeconds: repo.commandTimeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_SECONDS });
 const contractHash = repo => hash(JSON.stringify(contract(repo)));
 const refName = (repo, id) => `refs/autofix/verify/${repo.name}/${id}`;
 const recordPath = (root, repo, id) => path.join(root, 'review', 'records', 'verification', `${repo.name}-${id}.json`);
 
-const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund';
+export const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund';
+
+// KEY-DECISION 2026-11-11: install, prepare and verify commands get a minimal environment, not
+// the caller's, so a repo script (or a poisoned dependency) never sees tokens in the shell.
+// Tools still find their config and caches through HOME and these variables. Same list as
+// dev-autotask's verify.mjs; tests/repo.test.mjs keeps the two in step.
+export const COMMAND_ENV_PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TERM', 'LANG', 'LC_ALL', 'TZ',
+  'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'npm_config_cache', 'NPM_CONFIG_CACHE', 'NVM_DIR', 'VOLTA_HOME',
+  'PNPM_HOME', 'COREPACK_HOME', 'YARN_CACHE_FOLDER'];
+// repo.env names extra variables to pass through (e.g. DATABASE_URL); values never live in config.
+export const commandEnv = (source = process.env, extra = []) =>
+  ({ ...Object.fromEntries([...COMMAND_ENV_PASS, ...extra].filter(key => source[key] !== undefined).map(key => [key, source[key]])), CI: '1' });
 
 // Shared by prepare, review and merge verification. `exec(phase, command)` returns true on
 // success. The lock-sha cache is dropped first so a failed or partial install is retried.
@@ -52,11 +63,11 @@ export function createRuntime(env = process.env) {
       for (const branch of [repo.baseBranch, pr.headRefName]) git(repo.path, ['check-ref-format', `refs/heads/${branch}`]);
       git(repo.path, ['fetch', '--no-tags', 'origin', ...[repo.baseBranch, pr.headRefName].map(branch => `+refs/heads/${branch}:refs/remotes/origin/${branch}`)]);
     },
-    run: (command, cwd, log, timeoutMs = DEFAULT_COMMAND_TIMEOUT_SECONDS * 1000) => new Promise((resolve, reject) => {
+    run: (command, cwd, log, timeoutMs = DEFAULT_COMMAND_TIMEOUT_SECONDS * 1000, passEnv = []) => new Promise((resolve, reject) => {
       requireValue(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 3600000, 'Invalid command timeout');
       const fd = fs.openSync(log, 'wx');
       // A separate POSIX group lets cleanup stop the shell AND its test-runner children.
-      const child = spawn('/bin/sh', ['-c', command], { cwd, env: { ...env, CI: '1' }, detached: true, stdio: ['ignore', fd, fd] });
+      const child = spawn('/bin/sh', ['-c', command], { cwd, env: commandEnv(env, passEnv), detached: true, stdio: ['ignore', fd, fd] });
       let timedOut = false, exited = false, cleanupStarted = false, cleanupDone = false, settled = false;
       let exitCode = null, signal = null, killTimer, cleanupError, interrupted;
       const killGroup = sig => {
@@ -176,7 +187,7 @@ export async function verifyMerge(config, name, token, approval, runtime = creat
     runtime.git(wt.path, ['checkout', '--detach', result.commitSha]);
     const run = async (phase, command) => {
       const log = path.join(logs, `${result.commands.length}.log`);
-      const execution = await runtime.run(command, wt.path, log, (repo.commandTimeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_SECONDS) * 1000);
+      const execution = await runtime.run(command, wt.path, log, (repo.commandTimeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_SECONDS) * 1000, repo.env ?? []);
       result.commands.push({ phase, command, ...execution, log, logHash: hash(fs.readFileSync(log)) });
       requireValue(!execution.timedOut, `${phase} command timed out after ${execution.timeoutMs} ms: ${command}; see ${log}`);
       requireValue(execution.exitCode === 0 && !execution.signal, `${phase} command failed: ${command}; see ${log}`);

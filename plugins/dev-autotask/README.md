@@ -163,7 +163,7 @@ Per repo, dev-autotask reads:
 | `prepare` | `[]` | Codegen to run before the checks. |
 | `commandTimeoutSeconds` | `600` | Timeout for each command. |
 | `forbidden` | `[]` | Hard rules for this repo, added to the top-level `forbidden` list. |
-| `env` | `[]` | Names of environment variables to pass through to the checks. |
+| `env` | `[]` | Names of environment variables to pass through to the checks (dev-autofix honours it too). |
 
 `node scripts/verify.mjs <dir> <config> <repo-name>` runs install, prepare and verify
 with a per-command timeout and a **minimal environment**: `CI=1` plus `PATH`, `HOME`,

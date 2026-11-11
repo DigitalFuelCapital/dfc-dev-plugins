@@ -7,6 +7,22 @@ After any update, run `/dev-autofix:init` in Claude Code to refresh the copied b
 snapshot writer, and reinstall the plugin in Codex (see the
 [root README](../../README.md#update)).
 
+## 4.0.0
+
+**Breaking: repo commands no longer see your shell's environment.** Install, prepare and
+verify commands that a helper runs now get a minimal environment (`CI=1`, `PATH`, `HOME`,
+locale, temp and package-manager cache variables). If a command needs a variable, such as
+`NPM_TOKEN` or `DATABASE_URL`, add its name to the repo's `env` list in
+`autofix.config.json`. Credentials in files under `HOME` keep working.
+
+- `state.mjs config` and `preflight.mjs` check the platform and the Git version first, and
+  say plainly when Git is older than 2.36 or the platform is Windows without WSL.
+- New `pr.mjs queue init` creates the queue skeleton and `pr.mjs queue lint` checks a queue
+  against what the helpers parse. `init`, `plan` and `run` use them; `run` stops on lint
+  errors instead of failing halfway.
+- A queue entry whose kind is `Security` in any capitalisation is never auto-executed.
+  Lint reports an unknown or missing `kind` as an error.
+
 ## 3.3.3
 
 Documentation and skill wording only; no script changes.

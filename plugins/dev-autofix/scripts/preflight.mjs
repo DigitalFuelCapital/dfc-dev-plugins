@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { githubRemote, validateConfig } from './state.mjs';
+import { checkRuntime, githubRemote, validateConfig } from './state.mjs';
 
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
@@ -22,6 +22,7 @@ export function createRuntime(env = process.env) {
   const git = (cwd, args, options) => execute('git', ['-C', cwd, ...args], options);
   return {
     publishingHost: env.GH_HOST ?? 'github.com',
+    checkRuntime: () => checkRuntime(),
     git,
     login: () => execute('gh', ['api', 'user', '--jq', '.login']),
     permission: repo => JSON.parse(execute('gh', ['repo', 'view', `https://github.com/${repo.remote}`, '--json', 'viewerPermission'])).viewerPermission,
@@ -47,6 +48,11 @@ export async function preflight(config, names = [], runtime = createRuntime()) {
     try { const result = await action(); checks.push({ repo, check: name, ok: true }); return result ?? true; }
     catch { checks.push({ repo, check: name, ok: false, message: failure }); return null; }
   };
+  // Platform and Git version first: an old Git otherwise fails mid-run with usage text.
+  if (runtime.checkRuntime) {
+    try { runtime.checkRuntime(); checks.push({ repo: null, check: 'runtime', ok: true }); }
+    catch (error) { checks.push({ repo: null, check: 'runtime', ok: false, message: error.message }); }
+  }
   const hostOK = (runtime.publishingHost ?? 'github.com').toLowerCase() === 'github.com';
   checks.push({ repo: null, check: 'publishing-host', ok: hostOK, ...(hostOK ? {} : { message: 'gh must target github.com' }) });
   const author = hostOK ? await check(null, 'identity', () => { const login = runtime.login(); requireValue(nonempty(login), 'No login'); return login; }, 'Cannot resolve the gh login; authenticate gh first') : null;

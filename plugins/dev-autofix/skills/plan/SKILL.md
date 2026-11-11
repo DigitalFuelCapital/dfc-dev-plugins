@@ -22,7 +22,9 @@ Arguments: repo names to limit scope (default: all), `areas=N` investigators to 
 ## 1. Load config and budget
 
 Resolve `autofix.config.json` exactly as `/dev-autofix:init` does. Stop and say so if it is
-missing - tell the user to run `/dev-autofix:init`. Run the config check from
+missing - tell the user to run `/dev-autofix:init`. `<plugin>` below is this plugin's
+root, two directories above this skill's base directory, and `<config-file>` is the
+resolved config path. Run the config check from
 [shared workflow state](../../references/workflow-state.md#config-and-ownership) before
 planning; every repo needs nonempty verification commands.
 
@@ -118,8 +120,14 @@ under `## Summary - <repo.name>`. A complete file is in the
 ## Dropped                  one line per rejected candidate and why
 ```
 
-If an existing queue is missing one of these headings, add it; never rewrite or reorder
-entries that are already there to do so.
+If the queue file does not exist yet, create it with
+`node <plugin>/scripts/pr.mjs queue init <config-file>`. If an existing queue is missing
+one of these headings, add it; never rewrite or reorder entries that are already there to
+do so.
+
+When the queue is written, run `node <plugin>/scripts/pr.mjs queue lint <config-file>`.
+Fix every `error`, and every `warning` on an entry you wrote, before reporting. Report
+warnings on entries you did not write instead of editing them.
 
 - Dedupe by slug, by file overlap, and against open PRs.
 - Order best-first per repo: mechanical and low-risk before refactors.

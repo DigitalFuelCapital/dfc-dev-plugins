@@ -151,7 +151,11 @@ Between waves: gate and publish (step 5), safely switch the clean worktree (step
 re-read the budget (step 2), and stop when the count reaches `max` or a stop condition
 trips.
 
-**Sync PR outcomes first.** Once per run, before the first wave and after fetching, check
+**Check the queue first.** `<pr> queue lint <config-file>`. On `ok: false`, stop and
+show the `errors`: a malformed queue makes helpers fail halfway through a run, or lets an
+entry run that should not. Relay any `warnings` and continue.
+
+**Sync PR outcomes.** Once per run, before the first wave and after fetching, check
 every `pr-open (PR #n, ...)` entry:
 
 ```bash

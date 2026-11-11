@@ -144,6 +144,9 @@ problem with `file:line` evidence, exact steps, the checks that must pass, and t
 worker would otherwise fall into. See the
 [example queue](examples/AUTOFIX_QUEUE.md).
 
+`plan` and `run` lint the queue (`pr.mjs queue lint`) and stop on anything that would
+break a helper, so a hand-edited queue is checked before it is used.
+
 Read it between `plan` and `run`. An entry's `status` decides what happens to it:
 
 | Status | Meaning |
@@ -239,7 +242,7 @@ Per-repo settings (`repos[]`):
 | `commandTimeoutSeconds` | `600` | Timeout for each install, prepare and verify command (1 to 3600). Commands run with `CI=1`; a timed-out command is killed and recorded as a failure. |
 | `forbidden` | `[]` | Hard rules for this repo. Put its `CLAUDE.md` or `AGENTS.md` rules here: workers start with a fresh context and will not otherwise know them. |
 | `branchPrefix` | `fix/auto` | Branches are `<branchPrefix>-<yyyymmdd>-<slug>`. |
-| `env` | `[]` | Read only by dev-autotask. dev-autofix ignores it. |
+| `env` | `[]` | Names (never values) of environment variables to pass to install, prepare and verify commands. Everything else in your shell is withheld; see [Safety model](#repo-commands-run-with-a-minimal-environment). |
 
 ## Safety model
 
@@ -291,6 +294,16 @@ A refused branch stays local in the worktree, unpushed, and the report lists it 
 failing check. Finish applies the same gate to the commits it adds, and also checks that
 any merge commit only brings in the base branch.
 
+### Repo commands run with a minimal environment
+
+When a helper runs a repo's install, prepare or verify command (preparing a worktree,
+validating a review, verifying a merge), the command gets `CI=1`, `PATH`, `HOME`, and
+locale, temp and package-manager cache variables. Nothing else from your shell is passed
+through, so a repo script or a poisoned dependency cannot read `GH_TOKEN` or an API key.
+If a command needs a variable, list its name in the repo's `env`. Credentials in files
+under `HOME` (such as `~/.npmrc`) keep working. Commands a fix worker runs itself use the
+worker's own shell.
+
 ### What workers are barred from
 
 Starting dev or preview servers, running browser or e2e tests, deploying, creating or
@@ -341,9 +354,9 @@ The deterministic steps are scripts, not prompts:
 
 | Script | Owns |
 |---|---|
-| [`scripts/state.mjs`](scripts/state.mjs) | Config check, locks, the worktree guard, PR registration, recovery, approval records. |
+| [`scripts/state.mjs`](scripts/state.mjs) | Platform and Git version check, config check, locks, the worktree guard, PR registration, recovery, approval records. |
 | [`scripts/preflight.mjs`](scripts/preflight.mjs) | Delivery prerequisites: `gh` identity and write access, the remote base, a signing probe. |
-| [`scripts/pr.mjs`](scripts/pr.mjs) | The queue, worker briefs, the push gate, publishing, approval evidence, landing and cleanup. |
+| [`scripts/pr.mjs`](scripts/pr.mjs) | The queue (including `queue init` and `queue lint`), worker briefs, the push gate, publishing, approval evidence, landing and cleanup. |
 | [`scripts/review.mjs`](scripts/review.mjs) | Review's local checks at the exact PR head. |
 | [`scripts/merge.mjs`](scripts/merge.mjs) | Local integration verification before a merge. |
 
@@ -396,6 +409,13 @@ session and re-run. See [statusline/README.md](statusline/README.md).
 **`run` says the writer differs.** A plugin update changed the snapshot writer. Run
 `/dev-autofix:init` to copy the new one.
 
+**A verify command passes in my terminal but fails under autofix.** It probably reads
+an environment variable. Helpers run repo commands with a minimal environment; add the
+variable's name to the repo's `env` list.
+
+**The config check says my Git is too old.** The helpers need Git 2.36 or newer. Check
+`git --version`; on Ubuntu 22.04 the packaged Git is 2.34, so install a newer one.
+
 **Why keep "draft" out of PR titles?** Some review bots skip anything that looks
 draft-titled. The PR itself is still opened as a draft.
 
@@ -407,7 +427,8 @@ least one nonempty `verify` command for every repo.
 
 ## Development
 
-Run the test suite from the repository root:
+Run the test suite from the repository root. The tests build real git fixtures, so they
+need Git 2.36+, `ssh-keygen` and a committer identity:
 
 ```bash
 node --test plugins/dev-autofix/tests/*.test.mjs

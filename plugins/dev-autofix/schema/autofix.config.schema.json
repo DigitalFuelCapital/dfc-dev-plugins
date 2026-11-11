@@ -205,7 +205,7 @@
             "type": "array",
             "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
             "default": [],
-            "description": "Extra environment variable names (never values) that dev-autotask's verify passes through to install, prepare and verify commands, e.g. DATABASE_URL or NPM_TOKEN. dev-autofix ignores it."
+            "description": "Extra environment variable names (never values) passed through to install, prepare and verify commands, e.g. DATABASE_URL or NPM_TOKEN. Both dev-autofix and dev-autotask run those commands with a minimal environment (PATH, HOME, locale, temp and package-manager cache variables, CI=1), so anything not listed here is absent."
           },
           "testCommand": {
             "type": "string",

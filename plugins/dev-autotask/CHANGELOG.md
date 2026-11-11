@@ -3,6 +3,11 @@
 After any update, reinstall the plugin in Codex as well (see the
 [root README](../../README.md#update)), or `$task-review` keeps using the old skill.
 
+## 1.3.0
+
+- `verify.mjs` exports its environment pass-list so a repository test can keep it
+  identical to dev-autofix's. No behaviour change.
+
 ## 1.2.1
 
 Documentation and skill wording only; no script changes.

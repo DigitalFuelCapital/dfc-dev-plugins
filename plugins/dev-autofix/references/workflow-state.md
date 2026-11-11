@@ -25,6 +25,7 @@ Sections: [Helpers](#helpers) · [Files on disk](#files-on-disk) ·
 | `preflight.mjs <config> [repo-name ...]` | gh identity/permission, origin/base access, signing probe |
 | `review.mjs verify` | review's local checks at the exact PR head, then restore |
 | `pr.mjs prepare` | create or reuse the managed worktree, refresh dependencies |
+| `pr.mjs queue init / lint` | create the queue skeleton; check a queue against what the helpers parse |
 | `pr.mjs queue next / set-status / inbox / add-fallback` | queue selection and bookkeeping |
 | `pr.mjs brief` | render a fix worker's brief from `references/fix-brief.md` |
 | `pr.mjs gate run / finish` | push gate (read-only), with move-aware size |
@@ -64,6 +65,7 @@ The queue (`queuePath`, default `AUTOFIX_QUEUE.md`) lives beside the config, not
 ## Config and ownership
 
 Run `node <plugin>/scripts/state.mjs config <config-file>` before work. This checks the
+platform (macOS or Linux; WSL on Windows) and the Git version (2.36 or newer), then the
 required runtime fields, including a nonempty `verify` list for every repo; it does not
 replace the full config schema. Report incomplete config rather than invent commands.
 
@@ -210,7 +212,7 @@ Malformed manifests are preserved and block registration.
 
 ## Delivery preflight
 
-`preflight.mjs` resolves the `gh` login, checks the publishing host, each repo's origin,
+`preflight.mjs` repeats the platform and Git version check, resolves the `gh` login, checks the publishing host, each repo's origin,
 readable remote base and write permission, and signs one empty, unreferenced commit with
 `git commit-tree -S` in the first selected repo (signing config is normally global), then
 runs `git verify-commit` on it, the same check publish applies; an unverifiable signature
@@ -306,7 +308,13 @@ returning a verification ID. No model-authored `passed` flag is accepted. On fai
 the CLI exits nonzero and returns `failed` or `conflict` with evidence; preserve any
 unfinished work using the recovery procedure. A crash leaves a non-passing receipt.
 
-Each install, prepare and verify command runs with `CI=1` and a per-command timeout:
+Each install, prepare and verify command that a helper runs (in `prepare`, review
+validation and merge verification) gets a minimal environment: `CI=1`, plus `PATH`,
+`HOME`, locale, temp and package-manager cache variables, plus the names listed in
+`repo.env`. Tokens in the caller's shell are not passed through. Commands a fix worker
+runs itself use the worker's own shell and are not covered by this.
+
+Each of those commands also has a per-command timeout:
 `repo.commandTimeoutSeconds`, default 600 seconds, configurable from 1 to 3600. On
 timeout the helper sends SIGTERM to the shell's entire process group, then SIGKILL
 after a two-second grace period. It waits for that cleanup before returning and records

@@ -86,10 +86,61 @@ export function parseQueue(text) {
   });
 }
 
+// A security entry is never auto-executed; compare loosely so `Security` cannot slip through.
+const isSecurity = entry => entry.kind.trim().toLowerCase() === 'security';
+
 export function nextEntry(text, repoName) {
   const entries = parseQueue(text);
   const merged = new Set(entries.filter(entry => entry.status.startsWith('merged')).map(entry => entry.slug));
-  return entries.find(entry => entry.repo === repoName && entry.status === 'ready' && entry.kind !== 'security' && (entry.after === 'none' || merged.has(entry.after))) ?? null;
+  return entries.find(entry => entry.repo === repoName && entry.status === 'ready' && !isSecurity(entry) && (entry.after === 'none' || merged.has(entry.after))) ?? null;
+}
+
+const SUMMARY_HEAD = '| slug | status | after | title |\n|---|---|---|---|\n';
+// The layout every queue helper relies on. `queue init` writes it; `queue lint` checks it.
+export function queueSkeleton(config) {
+  const tables = config.repos.map(repo => `## Summary - ${repo.name}\n\n${SUMMARY_HEAD}`).join('\n');
+  return `# Autofix queue\n\nPre-verified fix plans consumed by \`/dev-autofix:run\`. Written by \`/dev-autofix:plan\`.\n\n${tables}\n## Inbox\n\n## Entries\n\n## Dropped\n`;
+}
+
+export const QUEUE_KINDS = ['mechanical', 'bugfix', 'refactor', 'security'];
+const STATUS_FORMS = [/^ready$/, /^needs-human \(.+\)$/, /^blocked \(.+\)$/, /^pushed \(.+\)$/, /^pr-open \(PR #\d+, .+\)$/, /^merged \(PR #\d+, .+\)$/, /^fallback \(.+\)$/];
+
+/**
+ * Check a queue file against what the helpers parse. `errors` are things that make a helper
+ * fail or an entry run when it should not; `warnings` are drift a human should tidy up.
+ */
+export function lintQueue(text, config) {
+  const errors = [], warnings = [];
+  const repoNames = new Set(config.repos.map(repo => repo.name));
+  for (const heading of ['## Inbox', '## Entries']) {
+    if (!new RegExp(`^${heading}[ \\t]*$`, 'm').test(text)) errors.push({ problem: `missing the \`${heading}\` heading` });
+  }
+  const entriesAt = text.search(/^## Entries[ \t]*$/m);
+  const firstEntry = text.search(/^### /m);
+  if (entriesAt >= 0 && firstEntry >= 0 && firstEntry < entriesAt) errors.push({ problem: 'entries (`### ` headings) appear before the `## Entries` heading' });
+  const entries = parseQueue(text);
+  const seen = new Set();
+  for (const entry of entries) {
+    const at = { slug: entry.slug };
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(entry.slug)) errors.push({ ...at, problem: 'slug must be lowercase letters, digits and hyphens' });
+    if (seen.has(entry.slug)) errors.push({ ...at, problem: 'duplicate slug' });
+    seen.add(entry.slug);
+    if (!entry.repo || !entry.title) errors.push({ ...at, problem: 'heading must be `### <slug> · <repo> · <title>`' });
+    else if (!repoNames.has(entry.repo)) errors.push({ ...at, problem: `repo \`${entry.repo}\` is not in the config` });
+    if (!QUEUE_KINDS.includes(entry.kind)) errors.push({ ...at, problem: `kind must be one of ${QUEUE_KINDS.join(', ')} (got \`${entry.kind || 'none'}\`)` });
+    if (!STATUS_FORMS.some(form => form.test(entry.status))) warnings.push({ ...at, problem: `status \`${entry.status || 'none'}\` is not a form the helpers know; the entry will never run` });
+    if (!entry.after) warnings.push({ ...at, problem: 'no `after:` line; the entry will never run' });
+    else if (entry.after !== 'none' && !entries.some(other => other.slug === entry.after)) warnings.push({ ...at, problem: `after: \`${entry.after}\` names no entry; the entry will never run` });
+    if (entry.statedSize === null && !entry.status.startsWith('fallback')) warnings.push({ ...at, problem: 'no `size: ~N` on the risk line; the default size cap applies' });
+    if (entry.repo && repoNames.has(entry.repo)) {
+      const table = new RegExp(`^## Summary - ${escape(entry.repo)}[ \\t]*$`, 'm').test(text);
+      const row = new RegExp(`^\\| ${escape(entry.slug)} \\| ([^|]*)\\|`, 'm').exec(text);
+      if (!table) warnings.push({ ...at, problem: `no \`## Summary - ${entry.repo}\` table` });
+      else if (!row) warnings.push({ ...at, problem: 'no row in the summary table' });
+      else if (row[1].trim() !== entry.status.replace(/\s*\(.*$/, '')) warnings.push({ ...at, problem: `summary table says \`${row[1].trim()}\`, entry says \`${entry.status}\`` });
+    }
+  }
+  return { ok: errors.length === 0, entries: entries.length, errors, warnings };
 }
 
 export function setStatus(text, slug, status) {
@@ -520,7 +571,7 @@ async function refreshDependencies({ config, repo, token, root, wtPath, created 
   const exec = async (phase, command) => {
     fs.mkdirSync(logs, { recursive: true });
     const log = path.join(logs, `${steps.length}.log`);
-    const result = await runtime.merge.run(command, wtPath, log, timeoutMs);
+    const result = await runtime.merge.run(command, wtPath, log, timeoutMs, repo.env ?? []);
     steps.push({ phase, command, log, ...result });
     return result.exitCode === 0 && !result.signal && !result.timedOut;
   };
@@ -603,6 +654,8 @@ export async function land({ configFile, config, repo, token, number }, runtime 
 // ---------------------------------------------------------------- CLI
 
 const USAGE = `Usage:
+  pr.mjs queue init <config>
+  pr.mjs queue lint <config>
   pr.mjs queue next <config> <repo>
   pr.mjs queue set-status <config> <slug> <status>
   pr.mjs queue inbox <config> <one-line item>
@@ -622,7 +675,15 @@ export async function main(argv, runtime = createRuntime()) {
   if (command === 'queue') {
     const [action, configFile, ...rest] = args;
     const config = validateConfig(read(configFile)), file = queueFile(configFile, config);
+    if (action === 'init') {
+      // Never overwrites: an existing queue is linted instead, so init is safe to repeat.
+      if (fs.existsSync(file)) return { created: false, file, ...lintQueue(fs.readFileSync(file, 'utf8'), config) };
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      writeText(file, queueSkeleton(config));
+      return { created: true, file };
+    }
     const text = fs.readFileSync(file, 'utf8');
+    if (action === 'lint') return { file, ...lintQueue(text, config) };
     if (action === 'next') { const entry = nextEntry(text, rest[0]); return entry ? { slug: entry.slug, kind: entry.kind, statedSize: entry.statedSize, title: entry.title } : { slug: null }; }
     if (action === 'set-status') { writeText(file, setStatus(text, rest[0], rest.slice(1).join(' '))); return { slug: rest[0], status: rest.slice(1).join(' ') }; }
     if (action === 'inbox') { writeText(file, addInbox(text, rest.join(' '))); return 'Inbox item added'; }
