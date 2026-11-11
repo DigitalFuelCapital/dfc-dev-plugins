@@ -163,6 +163,8 @@ plugins/dev-autofix/references/     contracts shared by several skills (state, l
 plugins/dev-autofix/schema/         JSON Schema for autofix.config.json (used by both plugins)
 plugins/dev-autofix/examples/       a sample config and queue
 plugins/dev-autofix/statusline/     the budget snapshot writer and an optional status line
+tests/                              repository-level tests: docs, examples and manifests against the code
+tools/release.mjs                   version-bump check and release notes, used by CI
 ```
 
 The split is deliberate: a `SKILL.md` holds judgement (what to investigate, when to stop
@@ -191,6 +193,12 @@ committer identity (`git config --global user.name` and `user.email`). `tests/` 
 repository-level checks that the documentation, examples and manifests agree with the
 code: versions match, Markdown links resolve, the example config and queue are valid, and
 every helper command a skill names exists.
+
+Releases are automatic. CI fails a pull request that changes a plugin's behaviour files
+without raising its version (`node tools/release.mjs check origin/main` runs the same
+check locally). When a merge to `main` carries a version that has no tag yet, the release
+workflow tags it `<plugin>-v<version>` and publishes a GitHub release with that version's
+changelog section as the notes.
 
 When you change a plugin:
 

@@ -1,0 +1,35 @@
+name: release
+
+# When a merge to main carries a plugin version that has no tag yet, tag it and publish a
+# GitHub release with that version's CHANGELOG.md section as the notes.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions pinned by commit SHA to guard against tag hijacking.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags decide what is pending
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Tag and release new plugin versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/release.mjs pending | while read -r plugin version tag; do
+            node tools/release.mjs notes "$plugin" > notes.md
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$plugin $version" --notes-file notes.md
+          done

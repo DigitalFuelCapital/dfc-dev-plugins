@@ -45,7 +45,9 @@ When a skill and a script disagree, the script is the contract. Fix the skill's 
    will tell you when a README, example or skill needs updating too.
 2. Bump the plugin's version in **both** `plugins/<name>/.claude-plugin/plugin.json` and
    `.claude-plugin/marketplace.json` for any behaviour change. Editing a `SKILL.md` is a
-   behaviour change. Breaking changes get a major version.
+   behaviour change. Breaking changes get a major version. CI checks this
+   (`node tools/release.mjs check origin/main`), and merging a new version to `main`
+   tags and releases it automatically.
 3. Add an entry at the top of the plugin's `CHANGELOG.md`, written for someone deciding
    whether to update.
 4. Explain non-obvious decisions where they live, with a dated comment in the style the
