@@ -48,6 +48,32 @@ Push gate:
 - New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
 - New `finishModel` (default `opus`) sets the model for finish's worker.
 
+Other ecosystems:
+
+- New per-repo `installMarker` (default `node_modules`): the path whose absence means
+  dependencies must be reinstalled. Without it, a non-npm repo reinstalled on every
+  prepare, review and merge verification. A new worked example covers a Python (uv) repo.
+- The schema has a stable `$id`, and `init` writes `$schema` into the config so editors
+  validate it.
+
+New command:
+
+- `/dev-autofix:status` (and `scripts/status.mjs`): a read-only summary of the budget, the
+  queue per repo, the last run's PRs and their review state, held locks and recovery
+  folders, with the next command to run.
+
+Skills read less:
+
+- `references/workflow-state.md` is now an index. Its sections moved into one reference
+  per phase (`locks.md`, `lock-recovery.md`, `worktrees.md`, `publishing.md`,
+  `review-validation.md`, `approvals.md`, `merge-verification.md`), and each skill reads
+  only the ones it needs. The text of the rules is unchanged.
+
+Internal:
+
+- `scripts/pr.mjs` is now the CLI only; its logic moved into `scripts/lib/` (queue, gate,
+  publish, approval, land). `pr.mjs` re-exports everything, so commands are unchanged.
+
 ## 3.3.3
 
 Documentation and skill wording only; no script changes.

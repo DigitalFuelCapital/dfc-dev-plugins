@@ -1,0 +1,20 @@
+{
+  "name": "dfc-dev-plugins",
+  "private": true,
+  "description": "Development tooling for the dfc-dev-plugins marketplace. The plugins themselves have no dependencies; this file exists for the test and lint commands.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test plugins/*/tests/*.test.mjs tests/*.test.mjs",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0"
+  }
+}

@@ -5,6 +5,8 @@ After any update, reinstall the plugin in Codex as well (see the
 
 ## 1.3.0
 
+- **Status.** New `/dev-autotask:status` lists every task with its PR, latest review and
+  the next command, without changing anything.
 - **Task lock.** `run` and `finish` take a per-task lock (`state.mjs lock` / `unlock`),
   so two sessions cannot work on one task at once.
 - **Publish check.** New `scripts/publish-check.mjs` runs before every push. It refuses

@@ -13,7 +13,7 @@ never use `--admin` or auto-merge, never merge without an explicit request.
 
 1. **Load.** `<state> show <id>` (with `--repo <repo>` for a `<repo>:<id>` argument, or
    if it reports several repos); `<remote>` is `task.remote`. Then `gh pr view <pr>
-   --repo <remote> --json number,state,isDraft,headRefOid,mergeable,url,comments`. Merged: report and stop.
+   --repo <remote> --json number,state,isDraft,headRefOid,mergeable,url,comments`. Merged (for example by hand on GitHub): skip to step 6, which cleans up and reports.
    Closed: stop and ask the user.
    Before changing anything, take the task lock: pick one session ID for this invocation
    (a UUID) and run `<state> --remote <task.remote> lock <id> <session>`. If another

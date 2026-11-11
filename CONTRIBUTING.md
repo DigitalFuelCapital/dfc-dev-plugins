@@ -9,13 +9,14 @@ For a security problem, follow [SECURITY.md](SECURITY.md) instead of opening an 
 
 ## Setup
 
-You need Git 2.36+, Node.js 20+ and `ssh-keygen`, on macOS or Linux. There is nothing to
-install: the helpers have no dependencies.
+You need Git 2.36+, Node.js 20+ and `ssh-keygen`, on macOS or Linux. The helpers have no
+dependencies and the tests need nothing installed; `npm ci` is only for the linter.
 
 ```bash
 git clone https://github.com/DigitalFuelCapital/dfc-dev-plugins
 cd dfc-dev-plugins
-node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
+npm test          # node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
+npm ci && npm run lint
 ```
 
 To try a change in a real session, register your checkout as the marketplace:
@@ -44,7 +45,9 @@ When a skill and a script disagree, the script is the contract. Fix the skill's 
    will tell you when a README, example or skill needs updating too.
 2. Bump the plugin's version in **both** `plugins/<name>/.claude-plugin/plugin.json` and
    `.claude-plugin/marketplace.json` for any behaviour change. Editing a `SKILL.md` is a
-   behaviour change. Breaking changes get a major version.
+   behaviour change. Breaking changes get a major version. CI checks this
+   (`node tools/release.mjs check origin/main`), and merging a new version to `main`
+   tags and releases it automatically.
 3. Add an entry at the top of the plugin's `CHANGELOG.md`, written for someone deciding
    whether to update.
 4. Explain non-obvious decisions where they live, with a dated comment in the style the

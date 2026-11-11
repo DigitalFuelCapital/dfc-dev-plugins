@@ -25,7 +25,7 @@ Resolve `autofix.config.json` exactly as `/dev-autofix:init` does. Stop and say 
 missing - tell the user to run `/dev-autofix:init`. `<plugin>` below is this plugin's
 root, two directories above this skill's base directory, and `<config-file>` is the
 resolved config path. Run the config check from
-[shared workflow state](../../references/workflow-state.md#config-and-ownership) before
+[config check and locks](../../references/locks.md) before
 planning; every repo needs nonempty verification commands.
 
 Read the budget snapshot with the same rules as `/dev-autofix:run` step 2: judge

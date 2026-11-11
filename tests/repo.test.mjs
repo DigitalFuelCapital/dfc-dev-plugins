@@ -206,6 +206,16 @@ test('every state.mjs command the dev-autotask docs name exists in the script', 
   assert.deepEqual([...used].filter(command => !known.has(command)), []);
 });
 
+test('every helper message quoted in the troubleshooting page still exists in the code', () => {
+  const page = read('plugins/dev-autofix/docs/troubleshooting.md');
+  // Helper messages come from the scripts; the worker's report phrases come from the fix brief.
+  const source = [...walk('plugins/dev-autofix/scripts', file => file.endsWith('.mjs')), 'plugins/dev-autofix/references/fix-brief.md'].map(read).join('\n');
+  // First cell of each table row; only quoted text of three words or more is a helper message.
+  const quoted = [...page.matchAll(/^\| (.+?) \|/gm)].flatMap(([, cell]) => [...cell.matchAll(/`([^`]+)`/g)].map(match => match[1])).filter(text => text.split(' ').length >= 3);
+  assert.ok(quoted.length >= 20, `only ${quoted.length} messages found`);
+  assert.deepEqual(quoted.filter(text => !source.includes(text)), []);
+});
+
 // ------------------------------------------------------------------ the two plugins stay in step
 
 test('both plugins run repo commands with the same defaults', () => {

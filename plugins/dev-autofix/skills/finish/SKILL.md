@@ -45,8 +45,11 @@ Resolve `autofix.config.json` and apply overrides exactly as `/dev-autofix:run` 
 Stop and tell the user to run `/dev-autofix:init` if it is missing. Resolve `reviewers`:
 if unset, it is the single login from `gh api user --jq .login`.
 
-Read [shared workflow state](../../references/workflow-state.md). Run its config check,
-acquire the repo lock before any worktree activity, and use its approval checker. Release
+Read these references before acting: [config check and locks](../../references/locks.md),
+[worktrees](../../references/worktrees.md), [approvals](../../references/approvals.md) and
+[merge verification](../../references/merge-verification.md). (The
+[index](../../references/workflow-state.md) lists every helper and file.) Run the config
+check, acquire the repo lock before any worktree activity, and use the approval checker. Release
 owned locks in a finally step after workers stop. Never continue a dependent action when
 a helper fails. With `dry-run`, classify without acquiring locks or writing records.
 
@@ -153,7 +156,8 @@ the lockfile digest changed.
 Use this step for the address path, or when step 9 finds a conflict that requires a
 published resolution. Approval with a clean local integration goes directly to step 9.
 Before syncing or launching a worker (not for merge-only approvals or `dry-run`), run
-`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`; on failure, report it,
+`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`
+([delivery preflight](../../references/publishing.md#delivery-preflight)); on failure, report it,
 skip this repo's source work and continue with other PRs. Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
 and requires another review; a local verification merge never gets pushed.
 

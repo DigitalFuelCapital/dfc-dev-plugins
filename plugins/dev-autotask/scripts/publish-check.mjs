@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from './state.mjs';
 
-// Same ids and patterns as MALWARE_SIGNATURES in dev-autofix's scripts/pr.mjs. The plugins install
+// Same ids and patterns as MALWARE_SIGNATURES in dev-autofix's scripts/lib/gate.mjs. The plugins install
 // separately, so the list is repeated here; tests/repo.test.mjs fails if the two drift.
 export const MALWARE_SIGNATURES = {
   'global-bang': String.raw`global\[['"]!['"]\]`, 'fromcharcode-127': String.raw`String\.fromCharCode\(127\)`,

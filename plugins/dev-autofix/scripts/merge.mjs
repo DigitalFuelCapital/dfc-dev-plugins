@@ -39,7 +39,12 @@ export async function installIfStale(root, repo, wtPath, exec) {
   const cache = path.join(root, `${repo.name}.lock.sha`);
   const prior = fs.existsSync(cache) ? fs.readFileSync(cache, 'utf8').trim().split(/\s+/)[0] : null;
   const install = repo.install ?? (fs.existsSync(path.join(wtPath, 'package.json')) ? DEFAULT_INSTALL : null);
-  if (!install || (fs.existsSync(path.join(wtPath, 'node_modules')) && prior === digest)) return null;
+  // The digest cache lives outside the worktree, so it can outlive the tree it describes. The
+  // marker is a path the install creates inside the tree (node_modules, .venv, vendor): no marker
+  // on disk means the dependencies are not there, whatever the cache says. "" trusts the cache.
+  const marker = repo.installMarker ?? 'node_modules';
+  const present = marker === '' || fs.existsSync(path.join(wtPath, marker));
+  if (!install || (present && prior === digest)) return null;
   fs.rmSync(cache, { force: true });
   if (!await exec('install', install)) return false;
   fs.writeFileSync(cache, `${digest}\n`);

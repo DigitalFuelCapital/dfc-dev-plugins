@@ -42,7 +42,7 @@ Nothing reviews or merges automatically. Each step stops and tells you the next 
 
 ## Requirements
 
-- **Claude Code** for `infiltrate`, `plan`, `run` and `finish`. **Codex** (or Claude Code)
+- **Claude Code** for `infiltrate`, `plan`, `run`, `finish` and `status`. **Codex** (or Claude Code)
   for `task-review`.
 - **GitHub** repos, with `gh` authenticated and allowed to push branches and open PRs.
   `finish` acts on review comments from the account `gh` is logged in as, so either use
@@ -103,6 +103,7 @@ paths, half-done migrations), then waits for you to pick one.
 | `/dev-autotask:run` | `[repo:]<task-id>` | Implements the plan and opens one draft PR. Resumes an interrupted task. |
 | `/dev-autotask:task-review` (Codex: `$task-review`) | `[pr-number or URL]` | Posts one comment: findings, or `LGTM` with the reviewed head. |
 | `/dev-autotask:finish` | `[repo:]<task-id> [merge]` | Addresses the latest review. With `merge`, merges an approved current head. |
+| `/dev-autotask:status` | `[repo:][task-id]` | Read-only. Lists tasks with their PR, latest review and next command. |
 
 `repo:` is a repo name from the config followed by a colon, for example
 `my-app: add CSV export`. Commands otherwise use the repo that contains the current

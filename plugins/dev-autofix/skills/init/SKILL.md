@@ -69,7 +69,10 @@ Decide each field:
   changed files. Omit when the repo has no unit runner.
 - **`install`** - keep the default `npm ci --ignore-scripts --no-audit --no-fund` unless
   the repo uses a different package manager; match the lockfile that is actually
-  committed. Install scripts stay off: they are how a poisoned dependency runs code on
+  committed. For a repo that is not npm-based, set all three of `install`, `lockfile` and
+  `installMarker` (the path the install creates inside the tree: `.venv` for uv or
+  Poetry, `vendor` for Bundler or Composer, `""` for Go or Rust, whose dependencies live
+  outside the tree); `<plugin>/examples/autofix.config.python.json` is a worked example. Install scripts stay off: they are how a poisoned dependency runs code on
   the machine, and a fresh worktree reinstalls everything. If the repo depends on a
   package that must build on install (look for `sharp`, `esbuild`, `prisma`, `bcrypt`,
   `better-sqlite3`, `@swc/*` in `package.json`), append `&& npm rebuild <package>` for
@@ -119,8 +122,9 @@ directory.
 
 Write `autofix.config.json` against the schema at
 `<plugin>/schema/autofix.config.schema.json`. Only include keys that differ from their
-defaults, plus `version` and `repos`. Run the config check in
-[shared workflow state](../../references/workflow-state.md) after writing it; do not
+defaults, plus `version` and `repos`, and a first key `"$schema"` set to the schema's
+`$id` URL so editors validate and complete the file. Run the config check in
+[config check and locks](../../references/locks.md) after writing it; do not
 report setup complete if required verification is missing.
 
 Leave `worktreeRoot` at its default (`~/.claude/autofix/worktrees`) unless the user asks

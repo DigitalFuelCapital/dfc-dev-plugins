@@ -169,6 +169,7 @@ export function validateConfig(config) {
     requireValue(nonempty(repo.baseBranch), `${repo.name}: baseBranch is required`);
     requireValue(Array.isArray(repo.verify) && repo.verify.length > 0 && repo.verify.every(nonempty), `${repo.name}: configure nonempty verify commands before proceeding`);
     requireValue(repo.commandTimeoutSeconds === undefined || (Number.isSafeInteger(repo.commandTimeoutSeconds) && repo.commandTimeoutSeconds >= 1 && repo.commandTimeoutSeconds <= 3600), `${repo.name}: commandTimeoutSeconds must be an integer from 1 to 3600`);
+    requireValue(repo.installMarker === undefined || (typeof repo.installMarker === 'string' && !path.isAbsolute(repo.installMarker) && !repo.installMarker.split(/[\\/]/).includes('..')), `${repo.name}: installMarker must be a path inside the worktree, or ""`);
     requireValue(repo.protectedPaths === undefined || patternList(repo.protectedPaths), `${repo.name}: protectedPaths must be a list of regular expressions`);
     requireValue(repo.env === undefined || (Array.isArray(repo.env) && repo.env.every(name => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))), `${repo.name}: env must be a list of variable names (never values)`);
   }
@@ -300,7 +301,7 @@ const gitRead = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encod
 
 const sshHost = host => execFileSync('ssh', ['-G', host], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).match(/^hostname\s+(\S+)$/m)?.[1];
 export function githubRemote(value, resolveSSH = sshHost) {
-  let host, pathname, ssh = false;
+  let host, pathname, ssh;
   if (value.includes('://')) {
     const url = new URL(value);
     requireValue(['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol) && !url.search && !url.hash, 'Unsupported origin URL');

@@ -61,3 +61,33 @@ test('config validation accepts env names and rejects values or malformed names'
   assert.ok(validateConfig(config(undefined)));
   for (const env of ['DATABASE_URL', ['A=b'], ['1BAD'], [''], [3]]) assert.throws(() => validateConfig(config(env)), /env must be a list of variable names/);
 });
+
+test('dependencies are reinstalled when the install marker is missing, whatever the digest cache says', async t => {
+  const { installIfStale } = await import('../scripts/merge.mjs');
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'autofix-marker-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const wt = path.join(root, 'wt');
+  fs.mkdirSync(wt);
+  fs.writeFileSync(path.join(wt, 'uv.lock'), 'lock v1\n');
+  const calls = [];
+  const exec = marker => async (phase, command) => { calls.push(command); if (marker) fs.mkdirSync(path.join(wt, marker), { recursive: true }); return true; };
+  const python = { name: 'svc', install: 'uv sync --frozen', lockfile: 'uv.lock', installMarker: '.venv' };
+  assert.equal(await installIfStale(root, python, wt, exec('.venv')), true);
+  assert.equal(await installIfStale(root, python, wt, exec('.venv')), null, 'marker present and digest unchanged');
+  fs.rmSync(path.join(wt, '.venv'), { recursive: true });
+  assert.equal(await installIfStale(root, python, wt, exec('.venv')), true, 'marker gone: reinstall');
+  fs.writeFileSync(path.join(wt, 'uv.lock'), 'lock v2\n');
+  assert.equal(await installIfStale(root, python, wt, exec('.venv')), true, 'lockfile changed: reinstall');
+  // The default marker is node_modules, so a non-npm repo without installMarker reinstalls every time.
+  const unmarked = { ...python, name: 'svc2', installMarker: undefined };
+  assert.equal(await installIfStale(root, unmarked, wt, exec(null)), true);
+  assert.equal(await installIfStale(root, unmarked, wt, exec(null)), true);
+  // "" trusts the digest alone, for toolchains that install outside the tree.
+  const go = { name: 'gosvc', install: 'go mod download', lockfile: 'uv.lock', installMarker: '' };
+  assert.equal(await installIfStale(root, go, wt, exec(null)), true);
+  assert.equal(await installIfStale(root, go, wt, exec(null)), null);
+  assert.equal(calls.length, 6);
+  const base = { version: 1, worktreeRoot: path.join(os.homedir(), '.claude', 'autofix', 'worktrees'), repos: [{ name: 'repo', path: os.tmpdir(), remote: 'owner/repo', baseBranch: 'main', verify: ['true'] }] };
+  for (const installMarker of ['/abs/.venv', '../outside', 3]) assert.throws(() => validateConfig({ ...base, repos: [{ ...base.repos[0], installMarker }] }), /installMarker/);
+  assert.ok(validateConfig({ ...base, repos: [{ ...base.repos[0], installMarker: '' }] }));
+});

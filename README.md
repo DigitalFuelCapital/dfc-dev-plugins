@@ -35,6 +35,7 @@ flowchart LR
 | Implement | `/dev-autofix:run` opens one draft PR per fix | `/dev-autotask:run` opens one draft PR | Claude Code | Nothing; it stops when the PRs are open. |
 | Review | `/dev-autofix:review` or `$review` | `$task-review` or `/dev-autotask:task-review` | Codex or Claude Code | Read the findings, or review by hand instead. |
 | Finish | `/dev-autofix:finish` addresses findings, or merges an approved head | `/dev-autotask:finish` addresses findings; `finish <id> merge` merges | Claude Code | Re-run review after any new commit. |
+| Check in | `/dev-autofix:status` | `/dev-autotask:status` | Claude Code | Nothing; both are read-only and name the next command. |
 
 The two plugins are independent, and you can install either one alone. They share one
 config file, `autofix.config.json`, so a workspace configured for one works with the other.
@@ -156,11 +157,14 @@ PRs you trust, and plain `codex` for everything else.
 plugins/<name>/.claude-plugin/      plugin manifest
 plugins/<name>/skills/<skill>/      one SKILL.md per command (the instructions the agent follows)
 plugins/<name>/scripts/             Node helpers the skills call for anything that must be deterministic
+plugins/dev-autofix/scripts/lib/    the modules behind pr.mjs: queue, gate, publish, approval, land
 plugins/<name>/tests/               node:test suites for the helpers
 plugins/dev-autofix/references/     contracts shared by several skills (state, locks, the fix brief)
 plugins/dev-autofix/schema/         JSON Schema for autofix.config.json (used by both plugins)
 plugins/dev-autofix/examples/       a sample config and queue
 plugins/dev-autofix/statusline/     the budget snapshot writer and an optional status line
+tests/                              repository-level tests: docs, examples and manifests against the code
+tools/release.mjs                   version-bump check and release notes, used by CI
 ```
 
 The split is deliberate: a `SKILL.md` holds judgement (what to investigate, when to stop
@@ -169,10 +173,19 @@ and ask), and a script holds anything that must not depend on a model getting it
 
 ## Development
 
-The helpers have no dependencies. Run the tests from the repository root:
+The helpers have no dependencies, and the tests need nothing installed. Run them from
+the repository root:
 
 ```bash
-node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
+node --test plugins/*/tests/*.test.mjs tests/*.test.mjs    # or: npm test
+```
+
+The linter is the one thing that needs an install. It checks correctness only (undefined
+or unused identifiers), not formatting:
+
+```bash
+npm ci
+npm run lint
 ```
 
 The plugin tests build real git fixtures, so they need Git 2.36+, `ssh-keygen` and a
@@ -180,6 +193,12 @@ committer identity (`git config --global user.name` and `user.email`). `tests/` 
 repository-level checks that the documentation, examples and manifests agree with the
 code: versions match, Markdown links resolve, the example config and queue are valid, and
 every helper command a skill names exists.
+
+Releases are automatic. CI fails a pull request that changes a plugin's behaviour files
+without raising its version (`node tools/release.mjs check origin/main` runs the same
+check locally). When a merge to `main` carries a version that has no tag yet, the release
+workflow tags it `<plugin>-v<version>` and publishes a GitHub release with that version's
+changelog section as the notes.
 
 When you change a plugin:
 
@@ -192,8 +211,9 @@ When you change a plugin:
    `/plugin marketplace add /absolute/path/to/dfc-dev-plugins` in Claude Code, or
    `codex plugin marketplace add /absolute/path/to/dfc-dev-plugins` in Codex.
 
-`plugins/dev-autofix/scripts/pr.mjs` contains malware indicator strings on purpose, and
-`tests/pr.test.mjs` uses one as a fixture. They are the push gate's detection patterns,
+`plugins/dev-autofix/scripts/lib/gate.mjs` and
+`plugins/dev-autotask/scripts/publish-check.mjs` contain malware indicator strings on
+purpose, and their tests use some as fixtures. They are the push gate's detection patterns,
 not infections; see [AGENTS.md](AGENTS.md).
 
 ## Contributing and security

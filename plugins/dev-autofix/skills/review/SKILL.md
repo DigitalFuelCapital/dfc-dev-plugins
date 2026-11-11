@@ -45,11 +45,14 @@ to the config directory. Use `repos[].remote` for every GitHub operation. A miss
 config is a batch blocker: report it and suggest Claude's `/dev-autofix:init` or an
 existing config; do not initialize Claude settings in Codex.
 
-Read [shared workflow state](../../references/workflow-state.md). `<plugin>` below is
-this plugin's root, two directories above this skill's directory. Run the config check
-before local validation; missing verification blocks readiness, but other PRs may still
-be inspected remotely. Use its repo ownership lock and worktree check for local work,
-and its immutable approval record format when publishing `LGTM`.
+Read these references: [config check and locks](../../references/locks.md),
+[local review validation](../../references/review-validation.md) and
+[approvals](../../references/approvals.md). Read
+[worktrees](../../references/worktrees.md) only if a worktree check fails. `<plugin>`
+below is this plugin's root, two directories above this skill's directory. Run the config
+check before local validation; missing verification blocks readiness, but other PRs may
+still be inspected remotely. Use the repo ownership lock and worktree check for local
+work, and the immutable approval record format when publishing an approval.
 
 Read `<worktreeRoot>/last-run.json` once and retain the snapshot for this pass:
 

@@ -34,14 +34,16 @@ Resolve `autofix.config.json` from the current directory or any ancestor, else
 missing. Apply argument overrides on top. Resolve `queuePath` relative to the directory
 holding the config; expand `~` in `worktreeRoot` and `usageSnapshotPath`.
 
-Read [shared workflow state](../../references/workflow-state.md) and run its config
-check. Require nonempty verification commands; acquire the run lock before recovery or
+Read [config check and locks](../../references/locks.md),
+[worktrees](../../references/worktrees.md) and [publishing](../../references/publishing.md)
+(the [index](../../references/workflow-state.md) lists every helper and file), and run
+the config check. Require nonempty verification commands; acquire the run lock before recovery or
 publication and each repo lock before worktree use. Acquiring them returns the `runToken`
 and `repoToken` that the helpers below take; also persist one ISO `startedAt` for this
 invocation. Release owned locks in a finally step after workers stop. A busy repo is
 skipped, never reset.
 
-Unless `dry-run`, run [delivery preflight](../../references/workflow-state.md#delivery-preflight)
+Unless `dry-run`, run [delivery preflight](../../references/publishing.md#delivery-preflight)
 for the selected repos before installing dependencies or launching workers:
 `node <plugin>/scripts/preflight.mjs <config-file> <repo-name ...>`. On `ok: false`, report
 the failed checks and stop before spending worker budget. Relay any `warnings`.
@@ -127,7 +129,7 @@ Run it before the first entry and again between entries to switch the clean tree
 the base. On failure, read `stage`:
 
 - **`prune-needed`** - the tree is missing but still registered. Follow the shared
-  [preparation and recovery procedure](../../references/workflow-state.md#worktree-preparation-and-recovery):
+  [preparation and recovery procedure](../../references/worktrees.md):
   confirm the folder was deleted (not moved or unmounted) and every
   `git worktree prune --dry-run --verbose --expire now` candidate is abandoned, prune, then
   run `prepare` again. Never prune on uncertainty.
@@ -258,9 +260,9 @@ because a payload added in one commit and removed in the next is still published
    `publish ... <slug> --max-diff <N>`. It needs no status reset, and adds a
    `Size override:` line to the PR body.
 3. **Malware signatures and risky constructs.** No added line matches a built-in
-   malware signature (`MALWARE_SIGNATURES` in `scripts/pr.mjs`) or a `blockPatterns`
+   malware signature (`MALWARE_SIGNATURES` in `scripts/lib/gate.mjs`) or a `blockPatterns`
    entry; a match sets `stopRun`. No added line matches a risky construct
-   (`RISKY_CONSTRUCTS`: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
+   (`RISKY_CONSTRUCTS` there: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
    check and blocks only that entry. `disabledPatterns` switches built-ins off by id.
 4. **Signed.** Every outgoing commit passes `git verify-commit`. SSH signing needs
    `gpg.ssh.allowedSignersFile` configured; if verification fails for that reason, tell the

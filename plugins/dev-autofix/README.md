@@ -34,6 +34,7 @@ flowchart LR
 | **`/dev-autofix:plan`** | Research. Investigates the repos, verifies every finding against the base branch, and writes a backlog of one-PR fix plans. |
 | **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in a reusable worktree, gates each branch, opens one draft PR each, and stops at the reserve. |
 | **`/dev-autofix:review`** | Review. Walks every PR from the last run without prompting, validates in the existing worktrees, and posts findings or an `LGTM` that names the commit it reviewed. Works in Codex as `$review`. |
+| **`/dev-autofix:status`** | Read-only. Budget, queue counts, the last run's PRs and their review state, held locks, and which command comes next. |
 | **`/dev-autofix:finish`** | Follow-through. Reads the review on each PR. Findings: a worker (Opus by default) addresses them and the lead gates and pushes. An approval of the current head: verifies it against the latest base and merges it. |
 
 Planning and fixing are separate on purpose. Planning is expensive, reads widely and needs
@@ -54,8 +55,9 @@ the lead pushes, comments and merges, and only after a scripted gate passes.
   `gpg.ssh.allowedSignersFile`, or the push gate cannot verify your commits.
 - **Node.js 20+**, `jq` and `shasum`, on macOS or Linux (WSL on Windows).
 - Repos with **non-interactive lint, typecheck and test commands**. The defaults assume
-  npm (`npm ci --ignore-scripts`, `package-lock.json`); set `install` and `lockfile` per
-  repo for anything else.
+  npm (`npm ci --ignore-scripts`, `package-lock.json`, `node_modules`); for anything else
+  set `install`, `lockfile` and `installMarker` per repo, as in the
+  [Python example](examples/autofix.config.python.json).
 - For budget gating: a **Claude subscription plan** that reports rate limits. Without one,
   `/dev-autofix:plan` still works and `/dev-autofix:run` needs an explicit `max=N`.
 - For review alone: Codex or Claude Code, `gh`, and the config and run manifest that
@@ -109,6 +111,9 @@ Codex does not port them.
 Repeat `review` and `finish` until every PR is merged or parked. Each `finish` that pushes
 new commits needs another `review` before those commits can merge.
 
+Lost track? `/dev-autofix:status` shows the budget, the queue, the last run's PRs and
+what to run next, without changing anything.
+
 Do not run `run`, `review` or `finish` at the same time on one workspace. They share one
 worktree per repo and take the same lock.
 
@@ -121,6 +126,7 @@ worktree per repo and take the same lock.
 | `/dev-autofix:run` | `[repo ...] [reserve=N] [max=N] [model=NAME] [dry-run]` | Arguments override the config for this run only. |
 | `/dev-autofix:review` (Codex: `$review`) | `[repo ...] [pr=N ...] [review-only]` | Defaults to every PR in the last run. |
 | `/dev-autofix:finish` | `[repo ...] [pr=N ...] [dry-run]` | Defaults to every PR in the last run. |
+| `/dev-autofix:status` | `[repo ...]` | Changes nothing. Use it to pick up where you left off. |
 
 Examples:
 
@@ -211,7 +217,8 @@ needs another review.
 `/dev-autofix:init` writes `autofix.config.json` at the workspace root: the common parent
 of the repos (for example `~/code/`), so the config and queue never show up as untracked
 files in a checkout. It is validated by [the schema](schema/autofix.config.schema.json),
-and there is a [worked example](examples/autofix.config.json). Skills find the config in
+and there are worked examples for an [npm workspace](examples/autofix.config.json) and a
+[Python (uv) repo](examples/autofix.config.python.json). Skills find the config in
 the current directory or any ancestor, then in `~/.claude/autofix.config.json`.
 
 Top-level settings:
@@ -252,6 +259,7 @@ Per-repo settings (`repos[]`):
 | `verify` | required | Commands that must pass before a PR opens or merges. Keep them fast and non-interactive: nothing that starts a server, needs a secrets manager, or touches a database. |
 | `install` | `npm ci --ignore-scripts --no-audit --no-fund` | Dependency install, run in a fresh worktree or when the lockfile changes. Install scripts stay off by default because that is how a poisoned dependency runs code. |
 | `lockfile` | `package-lock.json` | File hashed to decide whether to reinstall. |
+| `installMarker` | `node_modules` | A path the install creates inside the worktree (`.venv`, `vendor`). If it is missing, dependencies are reinstalled. Use `""` for Go or Rust. |
 | `prepare` | `[]` | Codegen a fresh worktree needs before typecheck passes. |
 | `testCommand` | none | Template with `{files}` for running only the tests that cover changed files. |
 | `commandTimeoutSeconds` | `600` | Timeout for each install, prepare and verify command (1 to 3600). Commands run with `CI=1`; a timed-out command is killed and recorded as a failure. |
@@ -383,16 +391,18 @@ The deterministic steps are scripts, not prompts:
 | [`scripts/pr.mjs`](scripts/pr.mjs) | The queue (including `queue init` and `queue lint`), worker briefs, the push gate, publishing, approval evidence, landing and cleanup. |
 | [`scripts/review.mjs`](scripts/review.mjs) | Review's local checks at the exact PR head. |
 | [`scripts/merge.mjs`](scripts/merge.mjs) | Local integration verification before a merge. |
+| [`scripts/status.mjs`](scripts/status.mjs) | The read-only summary behind `/dev-autofix:status`. |
 
 The model still reviews code and decides what to report. The full contract between the
-skills and these scripts is in [references/workflow-state.md](references/workflow-state.md).
+skills and these scripts is in [references/workflow-state.md](references/workflow-state.md),
+which indexes one reference per phase.
 
 **Interrupted sessions.** Locks do not expire and are never stolen after a timeout. An
 interrupted session can leave a lock and unfinished work behind. The lock records the
 owning Claude or Codex process, its start time, the host and the session. Use
 `state.mjs inspect-lock`, `resume-lock` (same session, after context compaction) or
 `break-lock` (after confirming the previous session and its workers stopped), as described
-in the [shared contract](references/workflow-state.md#config-and-ownership).
+in [references/lock-recovery.md](references/lock-recovery.md).
 
 **Recovery folders.** `state.mjs list-recovery <config-file>` lists preserved worktrees and
 the disk space they use, dependencies included. Run and finish include it in their
@@ -402,6 +412,8 @@ reports. Nothing there is deleted for you.
 entry stays `pushed`. The next run looks the PR up and registers it before continuing.
 
 ## FAQ
+
+For a specific error message, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
 **Does it merge anything?** Only through `/dev-autofix:finish`, when an exact approve
 token is bound to the current PR head, local integration with the latest base passes
