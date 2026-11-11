@@ -22,6 +22,7 @@ locale, temp and package-manager cache variables). If a command needs a variable
   errors instead of failing halfway.
 - A queue entry whose kind is `Security` in any capitalisation is never auto-executed.
   Lint reports an unknown or missing `kind` as an error.
+- The plugin manifest names its homepage and repository.
 
 ## 3.3.3
 

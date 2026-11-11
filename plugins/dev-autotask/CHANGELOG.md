@@ -7,6 +7,7 @@ After any update, reinstall the plugin in Codex as well (see the
 
 - `verify.mjs` exports its environment pass-list so a repository test can keep it
   identical to dev-autofix's. No behaviour change.
+- The plugin manifest names its homepage and repository.
 
 ## 1.2.1
 

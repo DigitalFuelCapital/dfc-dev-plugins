@@ -41,6 +41,21 @@ test('each plugin has the same version in its manifest, the marketplace and its 
   }
 });
 
+test('each plugin ships what a public reader and an installer need', () => {
+  for (const file of ['README.md', 'LICENSE', 'SECURITY.md', 'CONTRIBUTING.md', 'AGENTS.md', 'CLAUDE.md']) assert.ok(fs.existsSync(path.join(ROOT, file)), file);
+  assert.match(read('CLAUDE.md'), /^@AGENTS\.md$/m, 'CLAUDE.md imports AGENTS.md so both tools read the same notes');
+  for (const plugin of PLUGINS) {
+    // A plugin is installed on its own, so its licence and docs must be inside its folder.
+    for (const file of ['README.md', 'LICENSE', 'CHANGELOG.md']) assert.ok(fs.existsSync(path.join(ROOT, 'plugins', plugin, file)), `${plugin}/${file}`);
+    assert.equal(read(`plugins/${plugin}/LICENSE`), read('LICENSE'), `${plugin}/LICENSE`);
+    const manifest = json(`plugins/${plugin}/.claude-plugin/plugin.json`);
+    assert.equal(manifest.license, 'MIT');
+    assert.match(manifest.repository, /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
+    assert.ok(manifest.homepage.endsWith(`/plugins/${plugin}`));
+    assert.ok(manifest.description.length > 40 && manifest.keywords.length > 0);
+  }
+});
+
 // ------------------------------------------------------------------ skills
 
 test('every skill has matching frontmatter and must be invoked explicitly', () => {
