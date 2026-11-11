@@ -2,7 +2,7 @@
 name: plan
 description: Plan one large development task as one PR. Investigate the code, write plan.md with acceptance criteria and milestones, show it, and stop. The task can be free text or a path to a report file, including an infiltrate security report; with no request it suggests candidate tasks.
 disable-model-invocation: true
-argument-hint: "[repo:] [task-id] [request text, or path to a report file]"
+argument-hint: "[repo:] [id=<task-id>] [request text, or path to a report file]"
 ---
 
 # Plan one large task
@@ -89,9 +89,11 @@ The argument text is the request.
 
 ## 3. Task
 
-Use the given ID or derive a short lowercase slug from the title. If
-`<state> --repo <name> show <id>` finds it, this is a replan: revise its `plan`.
-Otherwise `<state> --repo <name> create <id> <title>`; it prints the `plan` path.
+Take the task ID from an `id=<slug>` argument. Without one, a bare first word counts as
+the ID only if `<state> --repo <name> show <word>` finds an existing task; otherwise
+derive a short lowercase slug from the title. If `<state> --repo <name> show <id>` finds
+the task, this is a replan: revise its `plan`. Otherwise
+`<state> --repo <name> create <id> <title>`; it prints the `plan` path.
 
 ## 4. Investigate
 

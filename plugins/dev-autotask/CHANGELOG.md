@@ -5,8 +5,20 @@ After any update, reinstall the plugin in Codex as well (see the
 
 ## 1.3.0
 
-- `verify.mjs` exports its environment pass-list so a repository test can keep it
-  identical to dev-autofix's. No behaviour change.
+- **Task lock.** `run` and `finish` take a per-task lock (`state.mjs lock` / `unlock`),
+  so two sessions cannot work on one task at once.
+- **Publish check.** New `scripts/publish-check.mjs` runs before every push. It refuses
+  uncommitted work, a credential or `.env` file in any commit, a known malware signature,
+  and an unsigned commit where the repository requires signing, and lists sensitive files
+  for the PR body.
+- **Reviewers.** `finish` acts on review comments from the logins in the config's
+  `reviewers` list, not only the account `gh` is logged in as.
+- **Cleanup.** `state.mjs cleanup <id>` removes a clean task worktree and marks the task
+  done; `finish` runs it after a confirmed merge. `list` shows done, worktree and lock.
+- `plan` takes the task ID as `id=<slug>`, so an ID can no longer be confused with the
+  first word of a request.
+- `verify.mjs` names Windows without WSL plainly, and exports its environment pass-list so
+  a repository test can keep it identical to dev-autofix's.
 - The plugin manifest names its homepage and repository.
 
 ## 1.2.1

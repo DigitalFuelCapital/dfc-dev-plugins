@@ -221,11 +221,14 @@ PR, verifies its repository/head/base, registers it in `last-run.json`, and reco
 `pr-open`. Read its `stage` on failure:
 
 - **`gate`** - the branch is not pushed and the entry is already `blocked (push gate:
-  <checks>)`. Leave the branch local for the user and continue with other repos. If
+  <checks>)`. Leave the branch local for the user and continue with other repos. A
+  `risky` check means the fix added a construct malware also uses (`eval(`,
+  `new Function(`, `createRequire`): that entry needs a human, and the run carries on. If
   `stopRun` is true, a known **malware signature** was found: stop the whole run, push
   nothing further, and tell the user to treat the machine as suspect.
 - **`pr-file`** - nothing was pushed. The PR file breaks a rule in `problems` (title
-  length, the word "draft", or a deploy step the entry names but the body drops). Fix
+  length, the word "draft", or a deploy step matching `deployPatterns` that the entry
+  names but the body drops). Fix
   `<worktreeRoot>/pr/<slug>.md` and run `publish` again.
 - **`create` / `discover` / `identity` / `register`** - the branch is pushed and the entry
   stays `pushed`. Report it; the next run's recovery pass finishes it. Never retry blindly.
@@ -236,11 +239,16 @@ because a payload added in one commit and removed in the next is still published
 
 0. **Shape.** The worktree is on the entry's fix branch, based on the freshly fetched base,
    with at least one commit and no merge commits.
-1. **Files.** No commit touches `.gitignore`, `.env*`, a lockfile, `package.json`,
-   `.github/`, `.husky/`, a shell or Windows script, a build/lint tool config
+1. **Files.** No commit touches `.gitignore`, `.env*`, a dependency manifest or lockfile
+   of any ecosystem (`package.json`, `pyproject.toml`, `requirements*.txt`, `go.mod`,
+   `Cargo.toml`, `Gemfile` and their lockfiles), package manager config (`.npmrc`,
+   `.yarnrc`), CI or hook config (`.github/`, `.husky/`, `.circleci/`, `.gitlab-ci.yml`,
+   `.pre-commit-config.yaml`), a shell or Windows script, a build file (`Makefile`,
+   `justfile`, `Taskfile`, `Dockerfile`, compose files), a build/lint tool config
    (`postcss`/`eslint`/`next`/`vite` config, `tsconfig*.json`, `wrangler.*`,
-   `.graphqlrc.*`), or makes a file executable. An entry that genuinely needs one of these
-   must be done by a human.
+   `.graphqlrc.*`), or a path matching `protectedPaths` (global or per repo), and none
+   makes a file executable. An entry that genuinely needs one of these must be done by a
+   human.
 2. **Size.** Net insertions plus deletions are within the limit: `maxDiffLines`, or the
    entry's stated size plus 50% when that is larger. Moved code counts once: a branch over
    the limit still **auto-passes** when its effective size (raw minus lines moved as contiguous
@@ -249,8 +257,11 @@ because a payload added in one commit and removed in the next is still published
    report. Only when the user explicitly asks to push a refused branch, re-run
    `publish ... <slug> --max-diff <N>`. It needs no status reset, and adds a
    `Size override:` line to the PR body.
-3. **Malware signatures.** No added line matches the built-in patterns in
-   `scripts/pr.mjs` (`MALWARE_PATTERNS`) or `blockPatterns`.
+3. **Malware signatures and risky constructs.** No added line matches a built-in
+   malware signature (`MALWARE_SIGNATURES` in `scripts/pr.mjs`) or a `blockPatterns`
+   entry; a match sets `stopRun`. No added line matches a risky construct
+   (`RISKY_CONSTRUCTS`: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
+   check and blocks only that entry. `disabledPatterns` switches built-ins off by id.
 4. **Signed.** Every outgoing commit passes `git verify-commit`. SSH signing needs
    `gpg.ssh.allowedSignersFile` configured; if verification fails for that reason, tell the
    user to configure it.

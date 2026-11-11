@@ -24,6 +24,30 @@ locale, temp and package-manager cache variables). If a command needs a variable
   Lint reports an unknown or missing `kind` as an error.
 - The plugin manifest names its homepage and repository.
 
+Approvals:
+
+- An approval may state its own commit: `LGTM` followed by `Reviewed head: <sha>`.
+  `review` now posts this form, so an approval no longer depends on a local record or on
+  GitHub's push history. Update the plugin in Codex and Claude Code together: an older
+  `finish` treats the two-line form as feedback.
+- When every pending comment is an approval, the newest decides and older ones are
+  superseded. An approval that could not be tied to a commit no longer blocks every later
+  approval. Feedback is never superseded.
+- `finish` writes `<!-- dev-autofix:finish addressed=... -->`; the earlier
+  `dev-autofix:review` spelling is still accepted on existing PRs.
+
+Push gate:
+
+- Built-in patterns are split into malware signatures (a match stops the run) and risky
+  constructs (`eval(`, `new Function(`, `createRequire`: a match blocks only that entry).
+  New `disabledPatterns` switches individual built-ins off by id.
+- The protected-file list now covers dependency manifests and lockfiles of other
+  ecosystems (Python, Go, Rust, Ruby, PHP, JVM), package manager config, more CI and hook
+  config, and build files (`Makefile`, `Dockerfile`, compose files). New `protectedPaths`,
+  global and per repo, adds project patterns.
+- New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
+- New `finishModel` (default `opus`) sets the model for finish's worker.
+
 ## 3.3.3
 
 Documentation and skill wording only; no script changes.

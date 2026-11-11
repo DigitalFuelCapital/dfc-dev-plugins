@@ -33,8 +33,8 @@ flowchart LR
 | **`/dev-autofix:init`** | Setup. Detects repos, base branches and verification commands, writes `autofix.config.json`, and wires up the budget snapshot. |
 | **`/dev-autofix:plan`** | Research. Investigates the repos, verifies every finding against the base branch, and writes a backlog of one-PR fix plans. |
 | **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in a reusable worktree, gates each branch, opens one draft PR each, and stops at the reserve. |
-| **`/dev-autofix:review`** | Review. Walks every PR from the last run without prompting, validates in the existing worktrees, and posts findings or an exact `LGTM`. Works in Codex as `$review`. |
-| **`/dev-autofix:finish`** | Follow-through. Reads the review on each PR. Findings: an Opus worker addresses them and the lead gates and pushes. An approval of the current head: verifies it against the latest base and merges it. |
+| **`/dev-autofix:review`** | Review. Walks every PR from the last run without prompting, validates in the existing worktrees, and posts findings or an `LGTM` that names the commit it reviewed. Works in Codex as `$review`. |
+| **`/dev-autofix:finish`** | Follow-through. Reads the review on each PR. Findings: a worker (Opus by default) addresses them and the lead gates and pushes. An approval of the current head: verifies it against the latest base and merges it. |
 
 Planning and fixing are separate on purpose. Planning is expensive, reads widely and needs
 judgement. Fixing is cheap, reads one plan and needs obedience. Splitting them means the
@@ -166,28 +166,39 @@ those by hand. An entry whose `after:` names another entry waits until that entr
 
 `/dev-autofix:review` (or `$review` in Codex) reviews all PRs in
 `<worktreeRoot>/last-run.json`, one after another, and leaves one comment per PR under your
-`gh` account: either findings, or exactly `LGTM`. A blocked PR is reported and the pass
+`gh` account: either findings, or an approval. A blocked PR is reported and the pass
 continues. Review never fixes, pushes or merges.
+
+An approval is a comment that is exactly an approve token (`LGTM` or `/merge` by default),
+either alone or followed by the commit it covers. Review posts the second form:
+
+```text
+LGTM
+Reviewed head: 0123456789abcdef0123456789abcdef01234567
+```
 
 You can also review by hand, with a PR comment, a review body or inline comments.
 
 `/dev-autofix:finish` then classifies each PR by the comments from the configured
 `reviewers` since its last follow-up:
 
-- **Exactly one comment, and it is exactly an approve token** (`LGTM` or `/merge` by
-  default): an approval. Finish merges only if it can prove the token was given for the
-  PR's current head commit.
-- **Anything else**, including "LGTM but rename X": feedback. A worker addresses it, the
-  lead gates and pushes, and finish posts a follow-up comment listing what changed. Run
-  review again afterwards.
+- **Every pending comment is an approval**: finish uses the newest one, and merges only
+  if it can prove that approval was given for the PR's current head commit.
+- **Anything else is pending**, including "LGTM but rename X": feedback. A worker
+  addresses it, the lead gates and pushes, and finish posts a follow-up comment listing
+  what changed. Run review again afterwards.
 
 How an approval is tied to a commit:
 
-| Approval came from | Evidence finish uses |
+| Approval | Evidence finish uses |
 |---|---|
-| `/dev-autofix:review` | The record review saved when it posted `LGTM`, which names the reviewed commit. |
+| Posted by `/dev-autofix:review` | The record review saved when it posted, or the `Reviewed head` line in the comment. Either is enough, so the approval still works if review and finish ran on different machines. |
+| Typed by hand with a `Reviewed head` line | That line. The comment must never have been edited. |
 | A formal GitHub review | The review's `commit_id`. |
-| A plain `LGTM` comment you typed | The branch's push history on GitHub. If that history is incomplete or ambiguous, the approval stays pending and finish says so. |
+| A bare `LGTM` typed by hand | The branch's push history on GitHub. If that history is incomplete or ambiguous, the approval stays pending and finish says so. |
+
+If an approval cannot be tied to a commit, approve again: a newer approval supersedes
+older ones.
 
 Before merging, finish tests the PR merged with the latest base locally (install, prepare
 and verify), waits for CI, re-checks the approval, and merges that exact commit. The local
@@ -213,11 +224,15 @@ Top-level settings:
 | `perFixPercentEstimate` | `2` | Starting guess for what one fix costs, used to size parallel waves. |
 | `maxSnapshotAgeSeconds` | `900` | How old a budget reading may be before `run` treats it as stale. |
 | `workerModel` | `sonnet` | Model for fix workers. Planning uses the session's model. |
+| `finishModel` | `opus` | Model for the worker that addresses review comments in `finish`. |
 | `maxDiffLines` | `150` | Size cap for one fix. Larger work is blocked for re-scoping. |
 | `fallbackSearch` | `false` | When on, a repo with an empty queue lets its worker pick its own fix. That skips your backlog review, so leave it off unless you mean it. |
 | `sources` | `[]` | Audit documents the planner mines for candidates. Treated as dated leads and re-verified. |
 | `forbidden` | `[]` | Hard rules appended to every worker and investigator brief. |
 | `blockPatterns` | `[]` | Extra regular expressions that must not appear on any added line. A match stops the run. |
+| `disabledPatterns` | `[]` | Ids of built-in push-gate patterns to switch off, for a repo that legitimately contains one (for example `create-require`). The ids are listed in the schema. |
+| `protectedPaths` | `[]` | Extra regular expressions for files no fix may touch, matched against the repo-relative path (for example `^db/migrations/`). |
+| `deployPatterns` | `["supabase functions deploy [\\w-]+"]` | Deploy steps to watch for. When a queue entry names a matching command, the PR body must repeat it. |
 | `reviewers` | your `gh` login | Whose PR comments `finish` acts on. Comments from anyone else are ignored. |
 | `approveTokens` | `["LGTM", "/merge"]` | Comments that mean "merge" when they are the only pending comment. |
 | `mergeMethod` | `squash` | How `finish` merges: `squash`, `merge` or `rebase`. |
@@ -241,6 +256,7 @@ Per-repo settings (`repos[]`):
 | `testCommand` | none | Template with `{files}` for running only the tests that cover changed files. |
 | `commandTimeoutSeconds` | `600` | Timeout for each install, prepare and verify command (1 to 3600). Commands run with `CI=1`; a timed-out command is killed and recorded as a failure. |
 | `forbidden` | `[]` | Hard rules for this repo. Put its `CLAUDE.md` or `AGENTS.md` rules here: workers start with a fresh context and will not otherwise know them. |
+| `protectedPaths` | `[]` | Extra protected file patterns for this repo, added to the top-level list. |
 | `branchPrefix` | `fix/auto` | Branches are `<branchPrefix>-<yyyymmdd>-<slug>`. |
 | `env` | `[]` | Names (never values) of environment variables to pass to install, prepare and verify commands. Everything else in your shell is withheld; see [Safety model](#repo-commands-run-with-a-minimal-environment). |
 
@@ -253,7 +269,7 @@ This plugin writes code and pushes branches, so the boundaries are explicit.
 | Command | Invoking it authorizes | It never |
 |---|---|---|
 | `run` | `branchPrefix` branches, signed commits on them, pushing them, and draft PRs against `baseBranch`. | Merges, pushes to the base branch, force-pushes, or touches your checkouts. |
-| `review` | One top-level PR comment per reviewed PR (findings or `LGTM`), and temporarily checking PR commits out in the existing run worktrees. | Fixes, commits, pushes, merges, changes draft state, or removes worktrees. |
+| `review` | One top-level PR comment per reviewed PR (findings or an approval), and temporarily checking PR commits out in the existing run worktrees. | Fixes, commits, pushes, merges, changes draft state, or removes worktrees. |
 | `finish` | Signed commits and fast-forward pushes to a PR's own branch, PR comments, and, only for an approved current head, marking the PR ready and merging it, then cleaning up the merged branch. | Overwrites a remote branch, pushes to the base branch, merges without an approval, or acts on comments from people outside `reviewers`. |
 
 `review-only` makes review post nothing. A do-not-merge instruction stops it from posting
@@ -275,18 +291,26 @@ origin are left where they are and reported.
 Workers never push. The lead pushes only after `scripts/pr.mjs gate` passes on the branch.
 It checks every outgoing commit, not just the net diff:
 
-- **Files.** No commit touches `.gitignore`, `.env*`, a lockfile, `package.json`,
-  `.github/`, `.husky/`, a shell or Windows script, or a build or lint tool config
-  (`postcss`, `eslint`, `next`, `vite`, `tsconfig`, `wrangler`, `.graphqlrc`), and none
-  makes a file executable. These are the files supply-chain malware commonly targets.
+- **Files.** No commit touches `.gitignore`, `.env*`, a dependency manifest or lockfile
+  (`package.json`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile`
+  and their lockfiles), package manager config (`.npmrc`), CI or hook config (`.github/`,
+  `.husky/`, `.circleci/`, `.gitlab-ci.yml`, `.pre-commit-config.yaml`), a shell or Windows
+  script, a build file (`Makefile`, `Dockerfile`, compose files), a build or lint tool
+  config (`postcss`, `eslint`, `next`, `vite`, `tsconfig`, `wrangler`, `.graphqlrc`), or
+  anything matching your `protectedPaths`, and none makes a file executable. These are
+  the files that decide what gets installed, built and run, and the ones supply-chain
+  malware commonly targets.
 - **Size.** The diff is within `maxDiffLines` (or the entry's stated size plus 50%, if
   larger). Moved code counts once: a branch over the cap still passes when it is within
   the cap after discounting lines moved as blocks of three or more, and its raw size is
   within 1.5 × `maxDiffLines`. The PR body says when that happened.
-- **Malware signatures.** No added line matches a built-in signature or a `blockPatterns`
-  entry. A match stops the whole run and tells you to treat the machine as suspect. The
-  built-in list includes generic constructs such as `eval(`, `new Function(` and
-  `createRequire`, so a legitimate fix that needs one of those must be done by hand.
+- **Malware signatures.** No added line matches a built-in signature of a known
+  campaign, or a `blockPatterns` entry. A match stops the whole run and tells you to treat
+  the machine as suspect.
+- **Risky constructs.** No added line contains `eval(`, `new Function(` or
+  `createRequire`. These are ordinary code that malware also uses, so a match only blocks
+  that one entry for you to do by hand, and the run carries on. If your codebase uses one
+  routinely, switch it off with `disabledPatterns`.
 - **Signed.** Every commit passes `git verify-commit`.
 - **Clean.** Nothing is left uncommitted.
 
@@ -397,10 +421,10 @@ and the report lists it with the failing check so you can inspect it.
 **Review posted `LGTM` but finish did not merge. Why?** Finish reports a classification
 per PR. `stale` means the approval was for an earlier commit; review the new head.
 `evidence-unavailable` means the approval could not be tied to a commit (for example the
-comment was edited, or GitHub's push history is incomplete). Finish leaves it pending;
-delete that comment and approve again with `/dev-autofix:review` or a formal GitHub
-review. `address` means the approval was not the only pending comment, or was not an exact
-token, so it was treated as feedback.
+comment was edited, or GitHub's push history is incomplete). Approve again with
+`/dev-autofix:review`; the newer approval supersedes it. `address` means something other
+than an approval was also pending, or the comment had extra text, so it was treated as
+feedback.
 
 **`run` says the snapshot is stale.** A budget reading only refreshes when a session gets
 an API response; an idle status line refresh does not count. Send any message in the

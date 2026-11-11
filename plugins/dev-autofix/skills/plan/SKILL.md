@@ -95,8 +95,10 @@ An entry is `ready` only if a worker can execute it with no judgement calls. Mar
 - adds, removes or bumps a dependency (also set `deps-change: yes`)
 - creates or runs a database migration, or changes a schema
 - deletes something whose only evidence of being dead is "no references found"
-- needs to edit a path the push gate refuses (`.gitignore`, `.env*`, lockfiles,
-  `package.json`, `.github/`, build/lint tool config) - see `/dev-autofix:run` step 5
+- needs to edit a path the push gate refuses (`.gitignore`, `.env*`, dependency manifests
+  and lockfiles, package manager config, CI and hook config, scripts, build files,
+  build/lint tool config, anything matching `protectedPaths`), or needs `eval(`,
+  `new Function(` or `createRequire` - see `/dev-autofix:run` step 5
 
 The phrasing matters: `needs-human (delete the legacy table, or keep it for audit
 history?)` is actionable. `needs-human (risky)` is not. Write the decision the human has

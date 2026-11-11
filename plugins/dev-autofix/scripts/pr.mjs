@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { checkApproval, checkWorktree, recordPR, validateConfig } from './state.mjs';
+import { checkApproval, checkWorktree, parseApproval, recordPR, validateConfig } from './state.mjs';
 import { checkVerifiedMerge, createRuntime as createMergeRuntime, installIfStale, releaseVerification, verifyMerge } from './merge.mjs';
 
 const requireValue = (ok, message) => { if (!ok) throw new Error(message); };
@@ -13,29 +13,61 @@ const shaOK = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value)
 const expand = value => value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 const rootPath = config => fs.realpathSync(expand(config.worktreeRoot ?? '~/.claude/autofix/worktrees'));
 const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const MARKER = '<!-- dev-autofix:review addressed=';
+// finish writes the first form; PRs handled before 4.0 carry the second. Both count.
+const MARKERS = ['<!-- dev-autofix:finish addressed=', '<!-- dev-autofix:review addressed='];
+const hasMarker = body => MARKERS.some(marker => body.includes(marker));
 const DEFAULT_TOKENS = ['LGTM', '/merge'];
 // Deleting a worktree with node_modules took over 120s in the live run; 30 minutes still bounds a hang.
 export const WORKTREE_REMOVE_TIMEOUT_MS = 30 * 60 * 1000;
 
 // KEY-DECISION 2026-09-27: one pattern list for run and finish gates; skills no longer carry grep blocks.
-export const MALWARE_PATTERNS = [
-  String.raw`global\[['"]!['"]\]`, String.raw`String\.fromCharCode\(127\)`, 'AUTH_API_KEY', 'auth-confirm-nine',
-  String.raw`api\.trongrid\.io`, 'bsc-dataseed', String.raw`aptoslabs\.com`, 'createRequire',
-  String.raw`(^|[^.A-Za-z_])eval\(`, String.raw`new Function\(`, String.raw`atob\(process\.env`, String.raw`config\.bat`,
-];
-const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb'];
+// KEY-DECISION 2026-11-11: two tiers. A malware signature is an indicator of one known campaign:
+// a match stops the run and flags the machine. A risky construct is ordinary code that malware
+// also uses: a match blocks that one entry for a human, and the run carries on. Either kind can
+// be switched off by id with config.disabledPatterns.
+export const MALWARE_SIGNATURES = {
+  'global-bang': String.raw`global\[['"]!['"]\]`, 'fromcharcode-127': String.raw`String\.fromCharCode\(127\)`,
+  'auth-api-key': 'AUTH_API_KEY', 'auth-confirm-nine': 'auth-confirm-nine', 'trongrid': String.raw`api\.trongrid\.io`,
+  'bsc-dataseed': 'bsc-dataseed', 'aptoslabs': String.raw`aptoslabs\.com`, 'atob-env': String.raw`atob\(process\.env`,
+  'config-bat': String.raw`config\.bat`,
+};
+export const RISKY_CONSTRUCTS = {
+  'create-require': 'createRequire', 'eval': String.raw`(^|[^.A-Za-z_])eval\(`, 'new-function': String.raw`new Function\(`,
+};
+export const MALWARE_PATTERNS = Object.values(MALWARE_SIGNATURES);
+
+export function gatePatterns(config = {}) {
+  const disabled = config.disabledPatterns ?? [];
+  const known = { ...MALWARE_SIGNATURES, ...RISKY_CONSTRUCTS };
+  for (const id of disabled) requireValue(id in known, `disabledPatterns: unknown pattern id ${id}; known ids: ${Object.keys(known).join(', ')}`);
+  const enabled = table => Object.entries(table).filter(([id]) => !disabled.includes(id)).map(([, source]) => new RegExp(source));
+  return { malware: [...enabled(MALWARE_SIGNATURES), ...(config.blockPatterns ?? []).map(source => new RegExp(source))], risky: enabled(RISKY_CONSTRUCTS) };
+}
+
+// Files a fix must never touch: they decide what code gets installed, built or run.
+const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'deno.lock',
+  'uv.lock', 'poetry.lock', 'Pipfile.lock', 'pdm.lock', 'Cargo.lock', 'go.sum', 'Gemfile.lock', 'composer.lock', 'mix.lock', 'pubspec.lock', 'flake.lock'];
+const MANIFESTS = ['pyproject.toml', 'setup.py', 'setup.cfg', 'Pipfile', 'go.mod', 'Cargo.toml', 'Gemfile', 'composer.json', 'pom.xml',
+  'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', 'deno.json', 'deno.jsonc', 'mix.exs', 'pubspec.yaml'];
+const PACKAGE_MANAGER_CONFIG = ['.npmrc', '.yarnrc', '.yarnrc.yml', '.pnpmfile.cjs', 'pip.conf', '.pypirc'];
+const BUILD_FILE = /^(makefile|gnumakefile|justfile|taskfile\.ya?ml|dockerfile(\.(?!md$).+)?|.+\.dockerfile|(docker-)?compose(\..+)?\.ya?ml)$/i;
+const CI_CONFIG = /(^|\/)(\.github|\.husky|\.circleci)\/|(^|\/)(\.gitlab-ci\.yml|\.pre-commit-config\.yaml)$/;
 const SCRIPT = /\.(sh|bash|zsh|fish|command|bat|cmd|ps1|vbs)$/i;
 const TOOL_CONFIG = /^(postcss\.config\..+|eslint\.config\..+|next\.config\..+|vite\.config\..+|tsconfig.*\.json|wrangler\..+|\.graphqlrc(\..+)?)$/;
 
-export function forbiddenPath(file, repo = {}) {
+export function forbiddenPath(file, repo = {}, config = {}) {
   const base = path.posix.basename(file);
   const locks = [...LOCKFILES, path.posix.basename(repo.lockfile ?? 'package-lock.json')];
   if (base === '.gitignore' || base === 'package.json' || locks.includes(base)) return base;
   if (/^\.env/.test(base)) return '.env*';
-  if (/(^|\/)\.(github|husky)\//.test(file)) return file.split('/').find(part => part === '.github' || part === '.husky');
+  if (MANIFESTS.includes(base) || /^requirements.*\.txt$/.test(base)) return 'dependency manifest';
+  if (PACKAGE_MANAGER_CONFIG.includes(base)) return 'package manager config';
+  const ci = CI_CONFIG.exec(file);
+  if (ci) return ci[2] ?? ci[4];
   if (SCRIPT.test(base)) return 'script';
   if (TOOL_CONFIG.test(base)) return 'build/lint config';
+  if (BUILD_FILE.test(base)) return 'build file';
+  for (const source of [...(config.protectedPaths ?? []), ...(repo.protectedPaths ?? [])]) if (new RegExp(source).test(file)) return `protectedPaths /${source}/`;
   return null;
 }
 
@@ -189,8 +221,9 @@ export function renderBrief({ config, repo, entry, worktree, root, date, templat
   const branch = `${prefix(repo)}-${date.replaceAll('-', '')}-${entry.slug}`;
   const prFile = path.join(root, 'pr', `${entry.slug}.md`);
   const verify = repo.verify.map(command => `\`${command}\``).join(', ');
+  const protectedPaths = [...(config.protectedPaths ?? []), ...(repo.protectedPaths ?? [])].map(source => `\`${source}\``).join(', ') || 'none';
   const values = {
-    repo: repo.name, worktree, repoPath: repo.path, baseBranch: repo.baseBranch, entry: entry.text, forbidden,
+    repo: repo.name, worktree, repoPath: repo.path, baseBranch: repo.baseBranch, entry: entry.text, forbidden, protectedPaths,
     maxDiffLines: String(config.maxDiffLines ?? 150), branch, prFile,
     verify: repo.testCommand ? `${verify}, and \`${repo.testCommand}\` for the tests covering the files you touched` : verify,
     coAuthor: config.coAuthor ? `, ending with \`Co-Authored-By: ${config.coAuthor}\`` : '',
@@ -280,7 +313,13 @@ export function sizeVerdict({ raw, moved, effective }, limit, config, maxDiff = 
 export function gate({ config, repo, token, mode, statedSize = null, headRef = null, expectBranch = null, maxDiff = null }, runtime = createRuntime()) {
   const { git } = runtime;
   const failures = [], fail = (check, detail) => failures.push({ check, detail });
-  const patterns = [...MALWARE_PATTERNS, ...(config.blockPatterns ?? [])].map(source => new RegExp(source));
+  const patterns = gatePatterns(config);
+  // One pass per patch: a signature is `malware`, a risky construct only `risky`.
+  const scanPatch = (label, patch) => {
+    const added = addedLines(patch);
+    for (const hit of scan(added, patterns.malware)) fail('malware', `${label}: /${hit.pattern}/ in "${hit.line}"`);
+    for (const hit of scan(added, patterns.risky)) fail('risky', `${label}: /${hit.pattern}/ in "${hit.line}" - a construct malware also uses; a human must make this change`);
+  };
   let wt;
   // KEY-DECISION 2026-09-27: finish workers commit on detached HEAD; the gate inspects without requiring a retaining ref.
   try { wt = checkWorktree(config, repo.name, token, git, { requireRetained: false }); }
@@ -312,10 +351,10 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
         if (!ancestor(parent, base)) fail('shape', `merge ${merge} pulls in ${parent}, not on origin/${repo.baseBranch}`);
       }
       for (const file of git(cwd, ['show', '--remerge-diff', '--format=', '--name-only', '-z', merge]).split('\0').filter(Boolean)) {
-        const why = forbiddenPath(file, repo);
+        const why = forbiddenPath(file, repo, config);
         if (why) fail('files', `${merge.slice(0, 8)} conflict resolution touches ${file} (${why})`);
       }
-      for (const hit of scan(addedLines(git(cwd, ['show', '--remerge-diff', '--format=', merge])), patterns)) fail('malware', `${merge.slice(0, 8)}: /${hit.pattern}/ in "${hit.line}"`);
+      scanPatch(merge.slice(0, 8), git(cwd, ['show', '--remerge-diff', '--format=', merge]));
     }
     limit = Math.ceil((config.maxDiffLines ?? 150) * 1.5);
     size = diffSize(git(cwd, ['diff', '-U0', '--no-color', base, 'HEAD']));
@@ -324,11 +363,11 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
     try { git(cwd, ['verify-commit', commit]); } catch { fail('signed', `signature invalid ${commit}`); }
     if (merges.includes(commit)) continue;
     for (const { newMode, file } of parseRawZ(git(cwd, ['diff-tree', '--no-commit-id', '--root', '-r', '-z', commit]))) {
-      const why = forbiddenPath(file, repo);
+      const why = forbiddenPath(file, repo, config);
       if (why) fail('files', `${commit.slice(0, 8)} touches ${file} (${why})`);
       if (newMode === '100755') fail('files', `${commit.slice(0, 8)} makes ${file} executable`);
     }
-    for (const hit of scan(addedLines(git(cwd, ['diff-tree', '--no-commit-id', '--root', '-r', '-p', '-U0', commit])), patterns)) fail('malware', `${commit.slice(0, 8)}: /${hit.pattern}/ in "${hit.line}"`);
+    scanPatch(commit.slice(0, 8), git(cwd, ['diff-tree', '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
   }
   const verdict = sizeVerdict(size, limit, config, maxDiff);
   if (!verdict.ok) fail('size', `${verdict.raw} changed lines (${verdict.moved} moved, ${verdict.effective} effective) exceeds limit ${verdict.limit}; auto-pass needs effective <= ${verdict.limit} and raw <= ${verdict.ceiling}`);
@@ -339,15 +378,19 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
 
 // ---------------------------------------------------------------- publish
 
-export function checkPRFile(file, entryText) {
+export const DEFAULT_DEPLOY_PATTERNS = [String.raw`supabase functions deploy [\w-]+`];
+
+export function checkPRFile(file, entryText, config = {}) {
   requireValue(fs.existsSync(file), `PR file missing: ${file}`);
   const [title, ...body] = fs.readFileSync(file, 'utf8').split('\n');
   const problems = [];
   if (!title.trim() || title.length > 70) problems.push('title must be 1-70 characters on the first line');
   if (/\bdraft\b/i.test(title + body.join('\n'))) problems.push('remove the word "draft" from the title and body');
   // KEY-DECISION 2026-09-27: deploy steps named by the plan must survive into the PR body (live run lost one).
-  for (const [command] of entryText.matchAll(/supabase functions deploy [\w-]+/g)) {
-    if (!body.join('\n').includes(command)) problems.push(`PR body must name the deploy step: ${command}`);
+  for (const source of config.deployPatterns ?? DEFAULT_DEPLOY_PATTERNS) {
+    for (const [command] of entryText.matchAll(new RegExp(source, 'g'))) {
+      if (!body.join('\n').includes(command)) problems.push(`PR body must name the deploy step: ${command}`);
+    }
   }
   return { title: title.trim(), body: body.join('\n').trim(), problems: [...new Set(problems)] };
 }
@@ -374,7 +417,7 @@ export function publish({ configFile, config, repo, repoToken, runToken, started
     return { ok: false, stage: 'gate', stopRun: gated.malware, failures: gated.failures };
   }
   const prFile = path.join(root, 'pr', `${slug}.md`);
-  const pr = checkPRFile(prFile, entry.text);
+  const pr = checkPRFile(prFile, entry.text, config);
   if (pr.problems.length) return { ok: false, stage: 'pr-file', prFile, problems: pr.problems };
 
   const remoteTip = git(repo.path, ['ls-remote', 'origin', `refs/heads/${branch}`]).split('\t')[0];
@@ -420,21 +463,27 @@ export function buildApprovalInput({ config, repo, number, root }, runtime = cre
     ...runtime.ghPages(`${api}/pulls/${number}/reviews`).filter(r => r.body?.trim()).map(r => ({ id: r.id, kind: 'review', url: r.html_url, author: r.user?.login, body: r.body, state: r.state, commitSha: r.commit_id, at: r.submitted_at })),
     ...runtime.ghPages(`${api}/pulls/${number}/comments`).map(c => ({ id: c.id, kind: 'inline', url: c.html_url, author: c.user?.login, body: c.body ?? '', path: c.path, line: c.line, createdAt: c.created_at, at: c.created_at })),
   ].filter(item => isReviewer(item.author));
-  const markers = timeline.filter(item => item.body.includes(MARKER)).map(item => Date.parse(item.at));
+  const markers = timeline.filter(item => hasMarker(item.body)).map(item => Date.parse(item.at));
   const since = markers.length ? Math.max(...markers) : -Infinity;
-  const pending = timeline.filter(item => !item.body.includes(MARKER) && Date.parse(item.at) > since).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).map(({ at, ...item }) => item);
+  const pending = timeline.filter(item => !hasMarker(item.body) && Date.parse(item.at) > since).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).map(({ at, ...item }) => item);
   const base = { number, headRef: pr.headRefName, headSha: pr.headRefOid, isDraft: pr.isDraft, pending };
   if (!pending.length) return { ...base, classification: 'awaiting review' };
-  const only = pending[0];
-  const candidate = pending.length === 1 && only.kind !== 'inline' && approveTokens.some(token => token.toLowerCase() === only.body.trim().toLowerCase());
-  if (!candidate) return { ...base, classification: 'address' };
+  // KEY-DECISION 2026-11-11: when every pending entry is an approval, the newest one decides and
+  // the older ones are superseded. An approval that could not be bound to a commit used to stay
+  // pending forever and turn every later approval into "feedback". Feedback is never superseded.
+  const approvals = pending.map(item => item.kind === 'inline' ? null : parseApproval(item.body, approveTokens));
+  if (!approvals.every(Boolean)) return { ...base, classification: 'address' };
+  const only = pending.at(-1), stated = approvals.at(-1).reviewedHead;
+  const superseded = pending.slice(0, -1).map(item => item.id);
+  Object.assign(base, { superseded });
 
-  const input = { remote, number, headRef: pr.headRefName, headSha: pr.headRefOid, pending, reviewers, approveTokens };
+  const input = { remote, number, headRef: pr.headRefName, headSha: pr.headRefOid, pending: [only], reviewers, approveTokens };
   let evidence = only.kind === 'review' ? 'review' : null;
   if (only.kind === 'issue') {
     // KEY-DECISION 2026-09-27: review's immutable record is always preferred; push history is only the fallback.
     const recordFile = path.join(root, 'review', 'records', `${repo.name}-pr${number}-comment${only.id}.approval.json`);
     if (fs.existsSync(recordFile)) { input.record = read(recordFile); evidence = 'record'; }
+    else if (stated) evidence = 'comment';
     else {
       const ref = `refs/heads/${pr.headRefName}`;
       const activities = runtime.ghPages(`${api}/activity?ref=${encodeURIComponent(ref)}&direction=desc&per_page=100`)
@@ -449,7 +498,7 @@ export function buildApprovalInput({ config, repo, number, root }, runtime = cre
     const approvedHead = checkApproval(input);
     return { ...base, classification: 'approve', evidence, approvedHead, input };
   } catch (error) {
-    const stale = (input.record && input.record.headSha !== pr.headRefOid) || (only.kind === 'review' && shaOK(only.commitSha) && only.commitSha !== pr.headRefOid) || /different head/.test(error.message);
+    const stale = (stated && stated !== pr.headRefOid) || (input.record && input.record.headSha !== pr.headRefOid) || (only.kind === 'review' && shaOK(only.commitSha) && only.commitSha !== pr.headRefOid) || /different head/.test(error.message);
     return { ...base, classification: stale ? 'stale' : 'evidence-unavailable', evidence, reason: error.message };
   }
 }

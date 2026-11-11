@@ -45,8 +45,9 @@ Nothing reviews or merges automatically. Each step stops and tells you the next 
 - **Claude Code** for `infiltrate`, `plan`, `run` and `finish`. **Codex** (or Claude Code)
   for `task-review`.
 - **GitHub** repos, with `gh` authenticated and allowed to push branches and open PRs.
-  Use the same GitHub account in Claude Code and Codex: `finish` looks for the review
-  comment under the account `gh` is logged in as.
+  `finish` acts on review comments from the account `gh` is logged in as, so either use
+  the same GitHub account in Claude Code and Codex, or list the reviewer's login under
+  `reviewers` in the config.
 - `git`, **Node.js 20+**, on macOS or Linux (WSL on Windows).
 - At least one fast, non-interactive **verify command** per repo (lint, typecheck, test).
 - An **integration branch** for PRs to target.
@@ -98,7 +99,7 @@ paths, half-done migrations), then waits for you to pick one.
 | Command | Arguments | What it does |
 |---|---|---|
 | `/dev-autotask:infiltrate` | `[repo:] [areas or objective]` | Local security audit with cross-verified findings. Writes `report.md`. |
-| `/dev-autotask:plan` | `[repo:] [task-id] [request, or path to a report]` | Writes `plan.md` and stops. With no request, suggests tasks. |
+| `/dev-autotask:plan` | `[repo:] [id=<task-id>] [request, or path to a report]` | Writes `plan.md` and stops. With no request, suggests tasks. Pass `id=` to name the task or to replan an existing one. |
 | `/dev-autotask:run` | `[repo:]<task-id>` | Implements the plan and opens one draft PR. Resumes an interrupted task. |
 | `/dev-autotask:task-review` (Codex: `$task-review`) | `[pr-number or URL]` | Posts one comment: findings, or `LGTM` with the reviewed head. |
 | `/dev-autotask:finish` | `[repo:]<task-id> [merge]` | Addresses the latest review. With `merge`, merges an approved current head. |
@@ -138,9 +139,18 @@ does not mean the repository is secure.
 - Production deployments and migrations are out of scope. Merging a task does not
   authorize them.
 
-How this differs from dev-autofix: there is no budget gate and no scripted push gate.
-The safeguards here are the plan you approve, the checks, the independent review, and a
-merge pinned to the reviewed commit. Commits follow each repository's own signing rules.
+How this differs from dev-autofix: there is no budget gate, and no gate that refuses
+protected files, because a large task may legitimately change `package.json` or CI. The
+safeguards here are the plan you approve, the checks, the independent review, and a merge
+pinned to the reviewed commit, plus two scripted guards:
+
+- **A task lock.** `run` and `finish` take a per-task lock, so two sessions cannot work on
+  one task at once. A lock left by a crashed session is replaced only after you confirm.
+- **A publish check before every push.** `scripts/publish-check.mjs` refuses uncommitted
+  work, a credential or `.env` file in any commit, a known malware signature, and an
+  unsigned commit in a repository that has `commit.gpgsign` on. It also lists the
+  sensitive files the branch touches (CI, dependency manifests, lockfiles, scripts, build
+  files) so they are called out in the PR.
 
 ## Configuration
 
@@ -165,6 +175,11 @@ Per repo, dev-autotask reads:
 | `forbidden` | `[]` | Hard rules for this repo, added to the top-level `forbidden` list. |
 | `env` | `[]` | Names of environment variables to pass through to the checks (dev-autofix honours it too). |
 
+It also reads two top-level settings shared with dev-autofix: `reviewers` (GitHub logins
+whose review comments `finish` acts on; default: the account `gh` is logged in as) and
+`disabledPatterns` (ids of built-in malware signatures to switch off in the publish
+check).
+
 `node scripts/verify.mjs <dir> <config> <repo-name>` runs install, prepare and verify
 with a per-command timeout and a **minimal environment**: `CI=1` plus `PATH`, `HOME`,
 locale, temp and package-manager cache variables. Tokens in your shell are not passed
@@ -182,12 +197,14 @@ repos; pass `<repo>:<id>` to choose.
 ~/.claude/dev-autotask/
   tasks/<owner>/<repo>/<id>/task.json    id, title, config, repo, remote, baseBranch, branch, worktree, pr, progress
   tasks/<owner>/<repo>/<id>/plan.md      the plan you approved
+  tasks/<owner>/<repo>/<id>/lock.json    present while a session is working on the task
   worktrees/<owner>/<repo>/<id>/         the task worktree
   audits/<owner>/<repo>/<audit-id>/      infiltrate notes, findings.json, report.md
 ```
 
-After a merge the records stay in place. Remove the worktree yourself with
-`git -C <checkout> worktree remove <worktree>`.
+After a merge, `finish` removes the task worktree and marks the task done. The records,
+the plan and the local branch stay in place. `node scripts/state.mjs list` shows every
+task with its PR, whether it is done, and whether a worktree or lock remains.
 
 ## FAQ
 
@@ -204,6 +221,10 @@ existing worktree, keeps uncommitted work, and reads the recorded progress.
 because of the Codex sandbox. `finish ... merge` warns you and then relies on GitHub's
 required checks. To have the reviewer run them, see
 [Reviewing in Codex with checks](../../README.md#reviewing-in-codex-with-checks).
+
+**`run` or `finish` says the task is locked.** Another session is working on it, or one
+crashed while it was. If you are sure that session has ended, say so and Claude will
+replace the lock.
 
 **I have a task from dev-autotask 1.0.** Those records are not resumed. Re-plan the task.
 

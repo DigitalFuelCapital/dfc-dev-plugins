@@ -19,7 +19,7 @@ merge anything during this phase.
 ## Authorization and client support
 
 Explicit invocation authorizes one top-level GitHub conversation comment per reviewed
-PR, including the exact `LGTM` approval token and its configured automation. It also
+PR, including the `LGTM` approval (step 4) and the merge it lets finish perform. It also
 authorizes fetching and temporarily checking out exact PR commits **in existing run
 worktrees only**, running scoped verification there, and restoring their original
 branch/commit afterward. No additional checkout question is needed for those worktrees.
@@ -152,30 +152,40 @@ exact reviewed SHAs and unreviewed delta, never `LGTM`, then advance.
 
 Avoid duplicate reviews for the same head **and review outcome/discussion state**.
 Compare prior records with actual GitHub comments, including a newer finish reply or
-reviewer comment. A prior `LGTM` alone carries no SHA: use a saved SHA/comment record or
-commit/discussion history to establish which head it covered; never assume it approves
-the current head. Unchanged heads can still need another review after finish posts a
+reviewer comment. A prior approval that names its `Reviewed head` covered exactly that
+commit. A bare `LGTM` carries no SHA: use a saved SHA/comment record or commit/discussion
+history to establish which head it covered; never assume it approves the current head. Unchanged heads can still need another review after finish posts a
 reply or blocked checks recover. If the same applicable review is already published,
 report its URL and advance without another comment.
 
 Account for finish's pending-review rule before approval: it reads configured reviewers'
-comments newer than its last `<!-- dev-autofix:review addressed=... -->` reply and approves
-only when exactly one pending entry is an exact token. Outstanding reviewer concerns
-must be resolved; do not append `LGTM` to a pending concerns timeline and claim finish
-will merge it. Any other pending entry, including a stale approval for an older head,
-also prevents a new token from being the sole pending entry. Report the need for a
-finish round or human reconciliation, then continue.
+comments newer than its last `<!-- dev-autofix:finish addressed=... -->` reply (older PRs
+carry `dev-autofix:review`; both count) and approves only when every pending entry is an
+approval. The newest approval then decides, so an earlier approval for an older head, or
+one that could not be tied to a commit, does not block a new one. Outstanding reviewer
+concerns do block: do not append an approval to a pending concerns timeline and claim
+finish will merge it. Report the need for a finish round or human reconciliation, then
+continue.
 Never edit/delete others' comments to manufacture approval. Do not put finish's marker
 on this skill's comments: it would hide the review from finish.
 
 Choose one comment, subject to the authorization rules:
 
-- **Ready:** the entire body is exactly `LGTM`, without formatting, SHA, signature,
-  hidden marker, or explanation. This token can trigger merge automation. Put validation
-  details and reviewed SHAs in local records and the final chat report.
-  After confirming publication, persist the immutable comment-specific approval record
-  with the shared helper. It binds the comment URL, exact body and author to the reviewed
-  SHA. Finish can use this record as commit evidence; a chat summary alone is not enough.
+- **Ready:** the entire body is exactly these two lines, with the full 40-character SHA
+  you reviewed and no formatting, signature, hidden marker or explanation:
+
+  ```text
+  LGTM
+  Reviewed head: <full head SHA>
+  ```
+
+  An optional third line `Checks: <passed | not run: reason>` is allowed; anything else
+  turns the comment into feedback. This comment lets finish merge that commit, and only
+  that commit. Put other validation details in local records and the final chat report.
+  After confirming publication, also persist the immutable comment-specific approval
+  record with the shared helper. It binds the comment URL, exact body and author to the
+  reviewed SHA, and is what finish uses if the comment is later edited. Never edit a
+  published approval: an edited approval is not accepted.
 - **Findings or material blockers:** concise Markdown with reviewed head/base SHAs,
   severity-ordered findings, commit-pinned links, suggested corrections, checks actually
   performed, and validation limits. For follow-ups, summarize resolved and remaining

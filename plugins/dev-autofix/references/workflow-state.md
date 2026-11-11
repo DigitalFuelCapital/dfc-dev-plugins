@@ -267,15 +267,35 @@ Save it with `node <plugin>/scripts/state.mjs record-approval <record-path> <inp
 Field order does not matter. Never rebind an existing record to a later head or infer the
 reviewed SHA from whatever head finish now sees.
 
+An approval is an exact token (`LGTM` or another `approveTokens` entry), either alone or
+followed by the commit it reviewed:
+
+```text
+LGTM
+Reviewed head: <40-character sha>
+Checks: <free text, optional>
+```
+
+Any other text makes the comment feedback. Review posts the two-line form, which states
+its own commit, and also saves the record above. A comment that names its head is accepted
+only for that head, and only if it has never been edited (anyone with write access can
+edit a comment).
+
 `node <plugin>/scripts/pr.mjs approval-input <config> <repo> <n> <out>` builds the input
 the checker (`state.mjs approval`) and `merge.mjs` consume: `remote`, `number`, `headRef`,
-current `headSha`, `reviewers`, `approveTokens`, the complete `pending` timeline, and one of
-`record` (preferred), a formal review's `commitSha`, or `history`. Only non-dismissed
-`APPROVED`/`COMMENTED` formal reviews with an exact token qualify.
+current `headSha`, `reviewers`, `approveTokens`, the deciding `pending` entry, and its
+evidence: a `record` (preferred), the comment's own `Reviewed head`, a formal review's
+`commitSha`, or `history`. Only non-dismissed `APPROVED`/`COMMENTED` formal reviews with an
+exact token qualify.
+
+When every pending entry is an approval, the newest decides and the older ones are
+returned as `superseded`. This is how an approval that could not be bound is cleared: the
+reviewer approves again. A pending entry that is not an approval is never superseded; it
+makes the classification `address`.
 
 ### Manual conversation approvals
 
-Without a record, a manual `LGTM` is bound using server push history
+Without a record or a `Reviewed head` line, a bare `LGTM` is bound using server push history
 ([repository activity API](https://docs.github.com/en/rest/repos/repos#list-repository-activities),
 every page, no actor or type filter, head re-read after collection). The checker binds the
 token to the last head before the comment and requires a continuous chain to the current
