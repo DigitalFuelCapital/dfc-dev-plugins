@@ -54,7 +54,8 @@ export function runCommand(command, cwd, timeoutMs, stdio = 'inherit', env = com
   });
 }
 
-export async function verify(config, dir, { stdio = 'inherit', log = console.error } = {}) {
+export async function verify(config, dir, { stdio = 'inherit', log = console.error, platform = process.platform } = {}) {
+  if (platform === 'win32') throw new Error('dev-autotask runs checks through /bin/sh and POSIX process groups; on Windows, run Claude Code or Codex inside WSL');
   // Same rule as dev-autofix's installIfStale: no install configured means the default
   // npm install only when the checkout has a package.json, otherwise none.
   const install = config.repo.install ?? (fs.existsSync(path.join(dir, 'package.json')) ? DEFAULT_INSTALL : null);

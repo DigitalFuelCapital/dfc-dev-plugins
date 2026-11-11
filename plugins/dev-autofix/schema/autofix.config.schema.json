@@ -67,7 +67,7 @@
       "type": "array",
       "items": { "type": "string" },
       "default": [],
-      "description": "Ids of built-in push-gate patterns to switch off. Malware signatures (a match stops the run): global-bang, fromcharcode-127, auth-api-key, auth-confirm-nine, trongrid, bsc-dataseed, aptoslabs, atob-env, config-bat. Risky constructs (a match blocks that one entry): create-require, eval, new-function. Use when a repository legitimately contains one."
+      "description": "Ids of built-in push-gate patterns to switch off. Malware signatures (a match stops the run): global-bang, fromcharcode-127, auth-api-key, auth-confirm-nine, trongrid, bsc-dataseed, aptoslabs, atob-env, config-bat. Risky constructs (a match blocks that one entry): create-require, eval, new-function. Use when a repository legitimately contains one. dev-autotask's publish check honours the malware signature ids too."
     },
 
     "protectedPaths": {
@@ -99,7 +99,7 @@
     "reviewers": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "GitHub logins whose PR comments /dev-autofix:finish acts on. Defaults to the authenticated gh user. Comments from anyone else are never acted on."
+      "description": "GitHub logins whose PR comments /dev-autofix:finish and /dev-autotask:finish act on. Defaults to the authenticated gh user. Comments from anyone else are never acted on."
     },
 
     "approveTokens": {

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as autofixPR from '../plugins/dev-autofix/scripts/pr.mjs';
 import * as autofixMerge from '../plugins/dev-autofix/scripts/merge.mjs';
 import * as autotaskVerify from '../plugins/dev-autotask/scripts/verify.mjs';
+import * as autotaskPublish from '../plugins/dev-autotask/scripts/publish-check.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
@@ -212,4 +213,8 @@ test('both plugins run repo commands with the same defaults', () => {
   assert.deepEqual(autofixMerge.COMMAND_ENV_PASS, autotaskVerify.COMMAND_ENV_PASS);
   const source = { PATH: '/bin', HOME: '/h', SECRET: 'x', EXTRA: 'y' };
   assert.deepEqual(autofixMerge.commandEnv(source, ['EXTRA']), autotaskVerify.commandEnv(source, ['EXTRA']));
+});
+
+test('both plugins look for the same malware signatures', () => {
+  assert.deepEqual(autotaskPublish.MALWARE_SIGNATURES, autofixPR.MALWARE_SIGNATURES);
 });
