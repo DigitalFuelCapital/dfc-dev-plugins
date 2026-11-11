@@ -156,6 +156,7 @@ PRs you trust, and plain `codex` for everything else.
 plugins/<name>/.claude-plugin/      plugin manifest
 plugins/<name>/skills/<skill>/      one SKILL.md per command (the instructions the agent follows)
 plugins/<name>/scripts/             Node helpers the skills call for anything that must be deterministic
+plugins/dev-autofix/scripts/lib/    the modules behind pr.mjs: queue, gate, publish, approval, land
 plugins/<name>/tests/               node:test suites for the helpers
 plugins/dev-autofix/references/     contracts shared by several skills (state, locks, the fix brief)
 plugins/dev-autofix/schema/         JSON Schema for autofix.config.json (used by both plugins)
@@ -169,10 +170,19 @@ and ask), and a script holds anything that must not depend on a model getting it
 
 ## Development
 
-The helpers have no dependencies. Run the tests from the repository root:
+The helpers have no dependencies, and the tests need nothing installed. Run them from
+the repository root:
 
 ```bash
-node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
+node --test plugins/*/tests/*.test.mjs tests/*.test.mjs    # or: npm test
+```
+
+The linter is the one thing that needs an install. It checks correctness only (undefined
+or unused identifiers), not formatting:
+
+```bash
+npm ci
+npm run lint
 ```
 
 The plugin tests build real git fixtures, so they need Git 2.36+, `ssh-keygen` and a
@@ -192,8 +202,9 @@ When you change a plugin:
    `/plugin marketplace add /absolute/path/to/dfc-dev-plugins` in Claude Code, or
    `codex plugin marketplace add /absolute/path/to/dfc-dev-plugins` in Codex.
 
-`plugins/dev-autofix/scripts/pr.mjs` contains malware indicator strings on purpose, and
-`tests/pr.test.mjs` uses one as a fixture. They are the push gate's detection patterns,
+`plugins/dev-autofix/scripts/lib/gate.mjs` and
+`plugins/dev-autotask/scripts/publish-check.mjs` contain malware indicator strings on
+purpose, and their tests use some as fixtures. They are the push gate's detection patterns,
 not infections; see [AGENTS.md](AGENTS.md).
 
 ## Contributing and security

@@ -40,7 +40,8 @@ Anything that lets work get further than the documented safety model allows, for
 - Findings that need an attacker who already controls your machine, your GitHub account
   or the configured reviewer's account. The verification receipts, for instance, guard
   against skipped checks, not against someone with the same filesystem access.
-- The malware signature strings in `plugins/dev-autofix/scripts/pr.mjs` and its tests.
+- The malware signature strings in `plugins/dev-autofix/scripts/lib/gate.mjs`,
+  `plugins/dev-autotask/scripts/publish-check.mjs` and their tests.
   They are detection patterns.
 
 ## Supported versions

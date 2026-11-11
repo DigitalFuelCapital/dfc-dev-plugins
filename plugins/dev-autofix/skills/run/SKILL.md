@@ -258,9 +258,9 @@ because a payload added in one commit and removed in the next is still published
    `publish ... <slug> --max-diff <N>`. It needs no status reset, and adds a
    `Size override:` line to the PR body.
 3. **Malware signatures and risky constructs.** No added line matches a built-in
-   malware signature (`MALWARE_SIGNATURES` in `scripts/pr.mjs`) or a `blockPatterns`
+   malware signature (`MALWARE_SIGNATURES` in `scripts/lib/gate.mjs`) or a `blockPatterns`
    entry; a match sets `stopRun`. No added line matches a risky construct
-   (`RISKY_CONSTRUCTS`: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
+   (`RISKY_CONSTRUCTS` there: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
    check and blocks only that entry. `disabledPatterns` switches built-ins off by id.
 4. **Signed.** Every outgoing commit passes `git verify-commit`. SSH signing needs
    `gpg.ssh.allowedSignersFile` configured; if verification fails for that reason, tell the

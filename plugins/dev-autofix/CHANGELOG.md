@@ -48,6 +48,11 @@ Push gate:
 - New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
 - New `finishModel` (default `opus`) sets the model for finish's worker.
 
+Internal:
+
+- `scripts/pr.mjs` is now the CLI only; its logic moved into `scripts/lib/` (queue, gate,
+  publish, approval, land). `pr.mjs` re-exports everything, so commands are unchanged.
+
 ## 3.3.3
 
 Documentation and skill wording only; no script changes.

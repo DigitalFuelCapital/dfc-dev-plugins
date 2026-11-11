@@ -300,7 +300,7 @@ const gitRead = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encod
 
 const sshHost = host => execFileSync('ssh', ['-G', host], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).match(/^hostname\s+(\S+)$/m)?.[1];
 export function githubRemote(value, resolveSSH = sshHost) {
-  let host, pathname, ssh = false;
+  let host, pathname, ssh;
   if (value.includes('://')) {
     const url = new URL(value);
     requireValue(['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol) && !url.search && !url.hash, 'Unsupported origin URL');

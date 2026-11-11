@@ -69,7 +69,7 @@ test('publish check finds credentials and .env files in any commit, without echo
   const f = fixture(t);
   const token = `ghp_${'A1b2'.repeat(9)}`;
   f.commit({ 'src/client.js': `const token = "${token}";\n`, '.env': 'SECRET=1\n', 'config/.env.production': 'X=1\n' });
-  f.commit({ 'src/client.js': 'const token = process.env.TOKEN;\n', '.env': null ?? '', 'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n' }, 'tidy');
+  f.commit({ 'src/client.js': 'const token = process.env.TOKEN;\n', '.env': '', 'key.pem': '-----BEGIN RSA PRIVATE KEY-----\nabc\n' }, 'tidy');
   const result = f.check();
   assert.equal(result.ok, false);
   assert.equal(result.malware, false);
