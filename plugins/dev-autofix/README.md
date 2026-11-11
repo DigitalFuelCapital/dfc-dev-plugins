@@ -385,14 +385,15 @@ The deterministic steps are scripts, not prompts:
 | [`scripts/merge.mjs`](scripts/merge.mjs) | Local integration verification before a merge. |
 
 The model still reviews code and decides what to report. The full contract between the
-skills and these scripts is in [references/workflow-state.md](references/workflow-state.md).
+skills and these scripts is in [references/workflow-state.md](references/workflow-state.md),
+which indexes one reference per phase.
 
 **Interrupted sessions.** Locks do not expire and are never stolen after a timeout. An
 interrupted session can leave a lock and unfinished work behind. The lock records the
 owning Claude or Codex process, its start time, the host and the session. Use
 `state.mjs inspect-lock`, `resume-lock` (same session, after context compaction) or
 `break-lock` (after confirming the previous session and its workers stopped), as described
-in the [shared contract](references/workflow-state.md#config-and-ownership).
+in [references/lock-recovery.md](references/lock-recovery.md).
 
 **Recovery folders.** `state.mjs list-recovery <config-file>` lists preserved worktrees and
 the disk space they use, dependencies included. Run and finish include it in their

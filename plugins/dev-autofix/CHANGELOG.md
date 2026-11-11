@@ -48,6 +48,13 @@ Push gate:
 - New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
 - New `finishModel` (default `opus`) sets the model for finish's worker.
 
+Skills read less:
+
+- `references/workflow-state.md` is now an index. Its sections moved into one reference
+  per phase (`locks.md`, `lock-recovery.md`, `worktrees.md`, `publishing.md`,
+  `review-validation.md`, `approvals.md`, `merge-verification.md`), and each skill reads
+  only the ones it needs. The text of the rules is unchanged.
+
 Internal:
 
 - `scripts/pr.mjs` is now the CLI only; its logic moved into `scripts/lib/` (queue, gate,

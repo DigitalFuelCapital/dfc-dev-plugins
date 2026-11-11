@@ -120,7 +120,7 @@ directory.
 Write `autofix.config.json` against the schema at
 `<plugin>/schema/autofix.config.schema.json`. Only include keys that differ from their
 defaults, plus `version` and `repos`. Run the config check in
-[shared workflow state](../../references/workflow-state.md) after writing it; do not
+[config check and locks](../../references/locks.md) after writing it; do not
 report setup complete if required verification is missing.
 
 Leave `worktreeRoot` at its default (`~/.claude/autofix/worktrees`) unless the user asks
