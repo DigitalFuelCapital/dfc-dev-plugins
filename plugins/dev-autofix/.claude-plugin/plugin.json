@@ -6,6 +6,8 @@
   "author": {
     "name": "Digital Fuel Capital"
   },
+  "homepage": "https://github.com/DigitalFuelCapital/dfc-dev-plugins/tree/main/plugins/dev-autofix",
+  "repository": "https://github.com/DigitalFuelCapital/dfc-dev-plugins",
   "license": "MIT",
   "keywords": [
     "autofix",

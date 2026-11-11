@@ -227,7 +227,7 @@ export function parseRawZ(output) {
   return rows;
 }
 
-// KEY-DECISION 2026-09-28: moved code counts once, not twice (#559 was a 160-line dedupe refused at 150).
+// KEY-DECISION 2026-09-28: moved code counts once, not twice (a 160-line dedupe was refused at a 150-line cap).
 // A move is a contiguous run of added lines equal to a contiguous run of deleted lines (both within
 // one hunk), with at least minRun non-blank lines. Matching across hunk boundaries is not a move.
 export function diffSize(patch, minRun = 3) {

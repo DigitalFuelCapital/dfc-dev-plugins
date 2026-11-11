@@ -194,7 +194,12 @@ When you change a plugin:
 
 `plugins/dev-autofix/scripts/pr.mjs` contains malware indicator strings on purpose, and
 `tests/pr.test.mjs` uses one as a fixture. They are the push gate's detection patterns,
-not infections; see [CLAUDE.md](CLAUDE.md).
+not infections; see [AGENTS.md](AGENTS.md).
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to make a change. Report security problems
+privately, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

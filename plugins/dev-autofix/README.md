@@ -436,5 +436,4 @@ node --test plugins/dev-autofix/tests/*.test.mjs
 
 ## License
 
-MIT - see [LICENSE](LICENSE). Originally derived from an MIT-licensed project; the
-copyright notice is retained as the license requires.
+MIT - see [LICENSE](LICENSE).
