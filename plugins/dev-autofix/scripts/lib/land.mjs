@@ -118,6 +118,9 @@ async function refreshDependencies({ config, repo, token, root, wtPath, created 
   const { git } = runtime;
   const marker = prepareMarker(root, repo);
   if (created && fs.existsSync(marker)) fs.unlinkSync(marker);
+  // A new tree has no dependencies yet: drop the digest cache so install runs even for a repo
+  // whose installMarker is "" (no path to look for).
+  if (created) fs.rmSync(path.join(root, `${repo.name}.lock.sha`), { force: true });
   const logs = path.join(root, 'review', 'scratch', `prepare-${randomUUID()}`);
   const timeoutMs = (repo.commandTimeoutSeconds ?? 600) * 1000;
   const steps = [];

@@ -48,6 +48,14 @@ Push gate:
 - New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
 - New `finishModel` (default `opus`) sets the model for finish's worker.
 
+Other ecosystems:
+
+- New per-repo `installMarker` (default `node_modules`): the path whose absence means
+  dependencies must be reinstalled. Without it, a non-npm repo reinstalled on every
+  prepare, review and merge verification. A new worked example covers a Python (uv) repo.
+- The schema has a stable `$id`, and `init` writes `$schema` into the config so editors
+  validate it.
+
 New command:
 
 - `/dev-autofix:status` (and `scripts/status.mjs`): a read-only summary of the budget, the
