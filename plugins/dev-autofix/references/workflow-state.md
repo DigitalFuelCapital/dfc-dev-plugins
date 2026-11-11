@@ -34,6 +34,7 @@ continue a dependent action after failure. Shell-quote paths and arguments.
 | `pr.mjs land` | verify, CI wait, approval re-check, merge, cleanup for one approved PR |
 | `merge.mjs verify / check / release` | local integration verification (used by `land`) |
 | `pr.mjs cleanup / remove-worktree` | post-merge queue, branch and worktree cleanup |
+| `status.mjs <config>` | read-only summary: budget, queue, last run, locks, recovery |
 
 ## Files on disk
 

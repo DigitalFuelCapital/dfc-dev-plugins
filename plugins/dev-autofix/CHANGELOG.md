@@ -48,6 +48,12 @@ Push gate:
 - New `deployPatterns` replaces the hardcoded `supabase functions deploy` check.
 - New `finishModel` (default `opus`) sets the model for finish's worker.
 
+New command:
+
+- `/dev-autofix:status` (and `scripts/status.mjs`): a read-only summary of the budget, the
+  queue per repo, the last run's PRs and their review state, held locks and recovery
+  folders, with the next command to run.
+
 Skills read less:
 
 - `references/workflow-state.md` is now an index. Its sections moved into one reference

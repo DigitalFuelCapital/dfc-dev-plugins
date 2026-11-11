@@ -35,6 +35,7 @@ flowchart LR
 | Implement | `/dev-autofix:run` opens one draft PR per fix | `/dev-autotask:run` opens one draft PR | Claude Code | Nothing; it stops when the PRs are open. |
 | Review | `/dev-autofix:review` or `$review` | `$task-review` or `/dev-autotask:task-review` | Codex or Claude Code | Read the findings, or review by hand instead. |
 | Finish | `/dev-autofix:finish` addresses findings, or merges an approved head | `/dev-autotask:finish` addresses findings; `finish <id> merge` merges | Claude Code | Re-run review after any new commit. |
+| Check in | `/dev-autofix:status` | `/dev-autotask:status` | Claude Code | Nothing; both are read-only and name the next command. |
 
 The two plugins are independent, and you can install either one alone. They share one
 config file, `autofix.config.json`, so a workspace configured for one works with the other.

@@ -34,6 +34,7 @@ flowchart LR
 | **`/dev-autofix:plan`** | Research. Investigates the repos, verifies every finding against the base branch, and writes a backlog of one-PR fix plans. |
 | **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in a reusable worktree, gates each branch, opens one draft PR each, and stops at the reserve. |
 | **`/dev-autofix:review`** | Review. Walks every PR from the last run without prompting, validates in the existing worktrees, and posts findings or an `LGTM` that names the commit it reviewed. Works in Codex as `$review`. |
+| **`/dev-autofix:status`** | Read-only. Budget, queue counts, the last run's PRs and their review state, held locks, and which command comes next. |
 | **`/dev-autofix:finish`** | Follow-through. Reads the review on each PR. Findings: a worker (Opus by default) addresses them and the lead gates and pushes. An approval of the current head: verifies it against the latest base and merges it. |
 
 Planning and fixing are separate on purpose. Planning is expensive, reads widely and needs
@@ -109,6 +110,9 @@ Codex does not port them.
 Repeat `review` and `finish` until every PR is merged or parked. Each `finish` that pushes
 new commits needs another `review` before those commits can merge.
 
+Lost track? `/dev-autofix:status` shows the budget, the queue, the last run's PRs and
+what to run next, without changing anything.
+
 Do not run `run`, `review` or `finish` at the same time on one workspace. They share one
 worktree per repo and take the same lock.
 
@@ -121,6 +125,7 @@ worktree per repo and take the same lock.
 | `/dev-autofix:run` | `[repo ...] [reserve=N] [max=N] [model=NAME] [dry-run]` | Arguments override the config for this run only. |
 | `/dev-autofix:review` (Codex: `$review`) | `[repo ...] [pr=N ...] [review-only]` | Defaults to every PR in the last run. |
 | `/dev-autofix:finish` | `[repo ...] [pr=N ...] [dry-run]` | Defaults to every PR in the last run. |
+| `/dev-autofix:status` | `[repo ...]` | Changes nothing. Use it to pick up where you left off. |
 
 Examples:
 
@@ -383,6 +388,7 @@ The deterministic steps are scripts, not prompts:
 | [`scripts/pr.mjs`](scripts/pr.mjs) | The queue (including `queue init` and `queue lint`), worker briefs, the push gate, publishing, approval evidence, landing and cleanup. |
 | [`scripts/review.mjs`](scripts/review.mjs) | Review's local checks at the exact PR head. |
 | [`scripts/merge.mjs`](scripts/merge.mjs) | Local integration verification before a merge. |
+| [`scripts/status.mjs`](scripts/status.mjs) | The read-only summary behind `/dev-autofix:status`. |
 
 The model still reviews code and decides what to report. The full contract between the
 skills and these scripts is in [references/workflow-state.md](references/workflow-state.md),
