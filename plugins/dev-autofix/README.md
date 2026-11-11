@@ -51,7 +51,7 @@ the lead pushes, comments and merges, and only after a scripted gate passes.
 - **Claude Code** for `init`, `plan`, `run` and `finish`. `review` runs in Claude Code or
   Codex.
 - **GitHub** repos, with `gh` authenticated and allowed to push branches and open PRs.
-- **Git 2.36+** with commit signing configured (SSH or GPG). For SSH signing, set
+- **Git 2.38+** with commit signing configured (SSH or GPG). For SSH signing, set
   `gpg.ssh.allowedSignersFile`, or the push gate cannot verify your commits.
 - **Node.js 20+**, `jq` and `shasum`, on macOS or Linux (WSL on Windows).
 - Repos with **non-interactive lint, typecheck and test commands**. The defaults assume
@@ -449,7 +449,7 @@ session and re-run. See [statusline/README.md](statusline/README.md).
 an environment variable. Helpers run repo commands with a minimal environment; add the
 variable's name to the repo's `env` list.
 
-**The config check says my Git is too old.** The helpers need Git 2.36 or newer. Check
+**The config check says my Git is too old.** The helpers need Git 2.38 or newer. Check
 `git --version`; on Ubuntu 22.04 the packaged Git is 2.34, so install a newer one.
 
 **Why keep "draft" out of PR titles?** Some review bots skip anything that looks
@@ -464,7 +464,7 @@ least one nonempty `verify` command for every repo.
 ## Development
 
 Run the test suite from the repository root. The tests build real git fixtures, so they
-need Git 2.36+, `ssh-keygen` and a committer identity:
+need Git 2.38+, `ssh-keygen` and a committer identity:
 
 ```bash
 node --test plugins/dev-autofix/tests/*.test.mjs

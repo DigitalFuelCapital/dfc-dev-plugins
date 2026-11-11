@@ -90,3 +90,16 @@ test('release notes are the changelog section for the current version, and pendi
 test('this repository has release notes for every plugin version it would tag', () => {
   for (const name of pluginNames(ROOT)) assert.ok(releaseNotes(ROOT, name).length > 20, name);
 });
+
+// Releases publish whatever the push carries, so they must wait for its validation. Only
+// one workflow may create releases, and its release job must need lint and every test cell.
+test('releases are created only after lint and tests pass for the same push', () => {
+  const dir = path.join(ROOT, '.github', 'workflows');
+  const releasing = fs.readdirSync(dir).filter(name => fs.readFileSync(path.join(dir, name), 'utf8').includes('gh release create'));
+  assert.deepEqual(releasing, ['test.yml']);
+  const workflow = fs.readFileSync(path.join(dir, 'test.yml'), 'utf8');
+  const job = /^ {2}release:\n((?: {4}.*\n|\s*\n)+)/m.exec(workflow)?.[1] ?? '';
+  assert.match(job, /^ {4}needs: \[lint, test\]$/m);
+  assert.match(job, /^ {4}if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'$/m);
+  assert.ok(job.includes('gh release create'), 'the needs line belongs to the job that releases');
+});

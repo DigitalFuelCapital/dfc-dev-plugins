@@ -53,7 +53,7 @@ These plugins encode one team's workflow. They expect:
   independent reviewer; both review skills also run in Claude Code.
 - **GitHub** repositories, with [`gh`](https://cli.github.com) authenticated and allowed to
   push branches and open PRs.
-- **Git 2.36 or newer**, with commit signing configured (SSH or GPG). `dev-autofix` refuses
+- **Git 2.38 or newer**, with commit signing configured (SSH or GPG). `dev-autofix` refuses
   to push an unsigned commit; `dev-autotask` follows each repository's own signing rules.
 - **Node.js 20 or newer** and `jq`, on **macOS or Linux**. The helper scripts use
   `/bin/sh`, `ps` and POSIX process groups, so on Windows use WSL.
@@ -188,7 +188,7 @@ npm ci
 npm run lint
 ```
 
-The plugin tests build real git fixtures, so they need Git 2.36+, `ssh-keygen` and a
+The plugin tests build real git fixtures, so they need Git 2.38+, `ssh-keygen` and a
 committer identity (`git config --global user.name` and `user.email`). `tests/` holds
 repository-level checks that the documentation, examples and manifests agree with the
 code: versions match, Markdown links resolve, the example config and queue are valid, and

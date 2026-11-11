@@ -167,14 +167,16 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
     commits = git(cwd, ['rev-list', '--reverse', `${head}..HEAD`, `^${base}`]).split('\n').filter(Boolean);
     merges = git(cwd, ['rev-list', '--merges', `${head}..HEAD`, `^${base}`]).split('\n').filter(Boolean);
     for (const merge of merges) {
-      for (const parent of git(cwd, ['rev-list', '--parents', '-n1', merge]).split(' ').slice(2)) {
-        if (!ancestor(parent, base)) fail('shape', `merge ${merge} pulls in ${parent}, not on origin/${repo.baseBranch}`);
-      }
-      for (const file of git(cwd, ['show', '--remerge-diff', '--format=', '--name-only', '-z', merge]).split('\0').filter(Boolean)) {
+      const parents = git(cwd, ['rev-list', '--parents', '-n1', merge]).split(' ').slice(1);
+      // Git skips --remerge-diff for octopus merges, so their content could not be inspected.
+      if (parents.length !== 2) { fail('shape', `merge ${merge} has ${parents.length} parents; only a two-parent merge of origin/${repo.baseBranch} can be checked`); continue; }
+      if (!ancestor(parents[1], base)) fail('shape', `merge ${merge} pulls in ${parents[1]}, not on origin/${repo.baseBranch}`);
+      // --no-renames lists both sides of a rename, so neither path escapes forbiddenPath.
+      for (const file of git(cwd, ['show', '--remerge-diff', '--no-renames', '--format=', '--name-only', '-z', merge]).split('\0').filter(Boolean)) {
         const why = forbiddenPath(file, repo, config);
         if (why) fail('files', `${merge.slice(0, 8)} conflict resolution touches ${file} (${why})`);
       }
-      scanPatch(merge.slice(0, 8), git(cwd, ['show', '--remerge-diff', '--format=', merge]));
+      scanPatch(merge.slice(0, 8), git(cwd, ['show', '--remerge-diff', '--no-renames', '--format=', merge]));
     }
     limit = Math.ceil((config.maxDiffLines ?? 150) * 1.5);
     size = diffSize(git(cwd, ['diff', '-U0', '--no-color', base, 'HEAD']));

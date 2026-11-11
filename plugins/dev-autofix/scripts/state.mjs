@@ -29,8 +29,9 @@ const canonical = (value) => {
 };
 
 // The helpers shell out to /bin/sh, ps and POSIX process groups, and use `git worktree list -z`
-// and `git show --remerge-diff`, both new in Git 2.36. Older Git fails later with usage text.
-export const MIN_GIT = [2, 36];
+// and `git show --remerge-diff` (Git 2.36) and `git merge-tree --write-tree` (Git 2.38, the
+// binding one: merge verification needs it). Older Git fails later with usage text.
+export const MIN_GIT = [2, 38];
 export function checkRuntime({ platform = process.platform, gitVersion = () => execFileSync('git', ['--version'], { encoding: 'utf8' }) } = {}) {
   requireValue(platform !== 'win32', 'dev-autofix needs a POSIX shell and process groups; on Windows, run Claude Code or Codex inside WSL');
   const match = /(\d+)\.(\d+)/.exec(gitVersion());

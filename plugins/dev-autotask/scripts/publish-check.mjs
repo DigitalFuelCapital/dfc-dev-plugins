@@ -47,23 +47,25 @@ export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, gi
   if (!branch.startsWith('dev/autotask-')) fail('shape', `on '${branch || 'a detached HEAD'}', expected a dev/autotask-<id> branch`);
   const dirty = git(worktree, ['status', '--porcelain']);
   if (dirty) fail('clean', `uncommitted changes: ${dirty.split('\n').slice(0, 10).join('; ')}`);
-  const commits = git(worktree, ['rev-list', '--reverse', '--no-merges', `${base}..HEAD`]).split('\n').filter(Boolean);
+  // Merges too: `finish` merges the base in to resolve conflicts, and a resolution can add anything.
+  const commits = git(worktree, ['rev-list', '--reverse', `${base}..HEAD`]).split('\n').filter(Boolean);
+  const merges = new Set(git(worktree, ['rev-list', '--merges', `${base}..HEAD`]).split('\n').filter(Boolean));
   if (!commits.length) fail('shape', `no commits ahead of origin/${baseBranch}`);
   const mustSign = (() => { try { return git(worktree, ['config', '--get', '--type=bool', 'commit.gpgsign']) === 'true'; } catch { return false; } })();
   const unsigned = [];
   // config.disabledPatterns (shared with dev-autofix) switches a built-in signature off by id.
   const malware = compile(MALWARE_SIGNATURES).filter(([id]) => !disabledPatterns.includes(id)), secrets = compile(SECRET_PATTERNS);
-  // Every commit, not just the net diff: a secret added and removed again is still published.
-  for (const commit of commits) {
-    const short = commit.slice(0, 8);
-    try { git(worktree, ['verify-commit', commit]); } catch { unsigned.push(short); }
-    for (const file of git(worktree, ['diff-tree', '--no-commit-id', '--root', '-r', '--name-only', '--diff-filter=AM', '-z', commit]).split('\0').filter(Boolean)) {
+  const ancestor = (a, b) => { try { git(worktree, ['merge-base', '--is-ancestor', a, b]); return true; } catch { return false; } };
+  const checkFiles = (short, files, what) => {
+    for (const file of files.split('\0').filter(Boolean)) {
       const name = path.posix.basename(file);
-      if (ENV_FILE.test(name) && !ENV_TEMPLATE.test(name)) fail('env-file', `${short} commits ${file}; .env files hold secrets and must not be published`);
+      if (ENV_FILE.test(name) && !ENV_TEMPLATE.test(name)) fail('env-file', `${short} ${what} ${file}; .env files hold secrets and must not be published`);
       for (const [pattern, label] of ATTENTION) if (pattern.test(file)) attention.set(file, label);
     }
+  };
+  const scanPatch = (short, patch) => {
     let file = null;
-    for (const line of git(worktree, ['diff-tree', '--no-commit-id', '--root', '-r', '-p', '-U0', commit]).split('\n')) {
+    for (const line of patch.split('\n')) {
       if (line.startsWith('+++ ')) { file = line.slice(4).replace(/^b\//, ''); continue; }
       if (!line.startsWith('+')) continue;
       const added = line.slice(1);
@@ -71,6 +73,25 @@ export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, gi
       // Never echo the matched text: the output of this check ends up in transcripts and reports.
       for (const [id, pattern] of secrets) if (pattern.test(added)) fail('secret', `${short} ${file}: looks like a ${id}`);
     }
+  };
+  // Every commit, not just the net diff: a secret added and removed again is still published.
+  for (const commit of commits) {
+    const short = commit.slice(0, 8);
+    try { git(worktree, ['verify-commit', commit]); } catch { unsigned.push(short); }
+    if (merges.has(commit)) {
+      const parents = git(worktree, ['rev-list', '--parents', '-n1', commit]).split(' ').slice(1);
+      // Git skips --remerge-diff for octopus merges, so their content could not be inspected.
+      if (parents.length !== 2) { fail('shape', `merge ${short} has ${parents.length} parents; only a two-parent merge of origin/${baseBranch} can be checked`); continue; }
+      // Only the base may be merged in; anything else would publish unreviewed history.
+      if (!ancestor(parents[1], base)) fail('shape', `merge ${short} pulls in ${parents[1].slice(0, 8)}, which is not on origin/${baseBranch}`);
+      // --remerge-diff shows what the merge itself changed beyond a clean automatic merge.
+      // --no-renames: a rename (.env.example -> .env) is then an added .env, not an R entry.
+      checkFiles(short, git(worktree, ['show', '--remerge-diff', '--no-renames', '--format=', '--name-only', '--diff-filter=AM', '-z', commit]), 'resolves a merge with');
+      scanPatch(short, git(worktree, ['show', '--remerge-diff', '--no-renames', '--format=', '-U0', commit]));
+      continue;
+    }
+    checkFiles(short, git(worktree, ['diff-tree', '--no-renames', '--no-commit-id', '--root', '-r', '--name-only', '--diff-filter=AM', '-z', commit]), 'commits');
+    scanPatch(short, git(worktree, ['diff-tree', '--no-renames', '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
   }
   if (mustSign && unsigned.length) fail('signed', `commit.gpgsign is on for this repository, but these commits have no valid signature: ${unsigned.join(' ')}`);
   return {

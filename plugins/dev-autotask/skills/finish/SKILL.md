@@ -12,14 +12,16 @@ argument-hint: "[repo:]<task-id> [merge]"
 never use `--admin` or auto-merge, never merge without an explicit request.
 
 1. **Load.** `<state> show <id>` (with `--repo <repo>` for a `<repo>:<id>` argument, or
-   if it reports several repos); `<remote>` is `task.remote`. Then `gh pr view <pr>
-   --repo <remote> --json number,state,isDraft,headRefOid,mergeable,url,comments`. Merged (for example by hand on GitHub): skip to step 6, which cleans up and reports.
-   Closed: stop and ask the user.
-   Before changing anything, take the task lock: pick one session ID for this invocation
-   (a UUID) and run `<state> --remote <task.remote> lock <id> <session>`. If another
-   session holds it, stop and say who and since when; use `--force` only after the user
-   confirms that session has ended. Release it before you stop, also on a failure:
+   if it reports several repos); `<remote>` is `task.remote`.
+   Before anything else, including the merged case below, take the task lock: pick one
+   session ID for this invocation (a UUID) and run
+   `<state> --remote <task.remote> lock <id> <session>`. If another session holds it,
+   stop and say who and since when; use `--force` only after the user confirms that
+   session has ended. Release it before you stop, also on a failure:
    `<state> --remote <task.remote> unlock <id> <session>`.
+   Then `gh pr view <pr> --repo <remote> --json
+   number,state,isDraft,headRefOid,mergeable,url,comments`. Merged (for example by hand
+   on GitHub): skip to step 6, which cleans up and reports. Closed: stop and ask the user.
 2. **Latest review.** The reviewers are `task.reviewers` (the config's `reviewers`
    list); when that is null, the one authenticated user (`gh api user --jq .login`). The
    newest comment by a reviewer containing a `Reviewed head: <sha>` line is the review. A
@@ -53,6 +55,8 @@ never use `--admin` or auto-merge, never merge without an explicit request.
      120s), merge `origin/<baseBranch>` into the branch, verify, run the publish check
      and push; that new head needs `$task-review` again. Confirm `state` is `MERGED` before saying so.
 6. **Report** the PR, head and outcome. After a confirmed merge, run
-   `<state> --remote <task.remote> cleanup <id>`: it removes the task worktree (never
-   forced; uncommitted work stops it) and marks the task done. The records, `plan.md` and
-   the local branch are kept. Release the task lock.
+   `<state> --remote <task.remote> cleanup <id> <session>`: it needs your lock, removes
+   the task worktree (never forced; uncommitted work, or a HEAD that the task branch does
+   not contain, stops it) and marks the task done. If it refuses, report why and leave the
+   worktree for the user. The records, `plan.md` and the local branch are kept. Release
+   the task lock.

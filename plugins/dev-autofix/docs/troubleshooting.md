@@ -13,7 +13,7 @@ anything is lost", not "something is broken".
 
 | Message | What it means | What to do |
 |---|---|---|
-| `is too old: dev-autofix needs Git` | The helpers use Git features added in 2.36. | Install a newer Git (`git --version`). Ubuntu 22.04 ships 2.34. |
+| `is too old: dev-autofix needs Git` | The helpers use Git features added in 2.38. | Install a newer Git (`git --version`). Ubuntu 22.04 ships 2.34. |
 | `dev-autofix needs a POSIX shell and process groups` | You are on Windows outside WSL. | Run Claude Code or Codex inside WSL. |
 | `configure nonempty verify commands before proceeding` | A repo in the config has no `verify` command. | Add at least one fast, non-interactive check, or re-run `/dev-autofix:init`. |
 | `worktreeRoot must be outside every main checkout` | `worktreeRoot` points inside a repo. | Use the default, or another folder outside every checkout. |

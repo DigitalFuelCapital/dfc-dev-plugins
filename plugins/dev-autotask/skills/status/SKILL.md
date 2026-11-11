@@ -18,19 +18,22 @@ Read-only. Do not edit, commit, push, comment, merge, lock or clean up anything.
    `/dev-autotask:plan`.
 2. **PR state.** For each task that has a `pr` and is not `done`:
    `gh pr view <pr> --repo <remote> --json state,isDraft,headRefOid,url,comments`.
-   The reviewers are the `reviewers` from `<state> show <id>`, or the authenticated
+   The reviewers are the `reviewers` from `<state> --remote <remote> show <id>` (the
+   row's `remote`: task IDs are unique only within one repository), or the authenticated
    user (`gh api user --jq .login`) when that is null. The latest review is the newest
    comment by a reviewer that contains a `Reviewed head: <sha>` line. If `gh` is
    unavailable, say the PR state could not be read and report the rest.
-3. **Report** one row per task: ID, title, PR link, and a state with its next command:
+3. **Report** one row per task: ID, title, PR link, and a state with its next command.
+   `<task>` is `<repo>:<id>` with the row's `repo`, so the command picks the same
+   repository even when another repository has a task with that ID:
 
    | State | Next |
    |---|---|
-   | No PR yet | `/dev-autotask:run <id>` (it approves the plan and implements it) |
+   | No PR yet | `/dev-autotask:run <task>` (it approves the plan and implements it) |
    | PR open, no review of the current head | `$task-review <pr>` in Codex |
-   | Latest review has findings | `/dev-autotask:finish <id>` |
-   | `LGTM` whose `Reviewed head` equals the current head | `/dev-autotask:finish <id> merge` |
-   | PR merged, task not done | `/dev-autotask:finish <id>` (records the merge and cleans up) |
+   | Latest review has findings | `/dev-autotask:finish <task>` |
+   | `LGTM` whose `Reviewed head` equals the current head | `/dev-autotask:finish <task> merge` |
+   | PR merged, task not done | `/dev-autotask:finish <task>` (records the merge and cleans up) |
    | PR closed unmerged | ask the user what they want to do with the task |
    | Done | nothing; mention a leftover worktree if `worktree` is set |
 

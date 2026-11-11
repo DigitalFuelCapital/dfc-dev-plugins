@@ -6,7 +6,7 @@ after a failure. Shell-quote paths and arguments. Index of these references:
 [workflow-state.md](workflow-state.md).
 
 Run `node <plugin>/scripts/state.mjs config <config-file>` before work. This checks the
-platform (macOS or Linux; WSL on Windows) and the Git version (2.36 or newer), then the
+platform (macOS or Linux; WSL on Windows) and the Git version (2.38 or newer), then the
 required runtime fields, including a nonempty `verify` list for every repo; it does not
 replace the full config schema. Report incomplete config rather than invent commands.
 

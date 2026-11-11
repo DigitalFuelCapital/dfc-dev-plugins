@@ -16,7 +16,10 @@ locale, temp and package-manager cache variables). If a command needs a variable
 `autofix.config.json`. Credentials in files under `HOME` keep working.
 
 - `state.mjs config` and `preflight.mjs` check the platform and the Git version first, and
-  say plainly when Git is older than 2.36 or the platform is Windows without WSL.
+  say plainly when Git is older than 2.38 (merge verification needs
+  `git merge-tree --write-tree`) or the platform is Windows without WSL.
+- The finish gate refuses a merge with more than two parents (git cannot show what its
+  resolution changed), and checks both paths of a file renamed while resolving a merge.
 - New `pr.mjs queue init` creates the queue skeleton and `pr.mjs queue lint` checks a queue
   against what the helpers parse. `init`, `plan` and `run` use them; `run` stops on lint
   errors instead of failing halfway.

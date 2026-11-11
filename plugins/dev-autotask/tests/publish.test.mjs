@@ -101,6 +101,83 @@ test('publish check requires signatures only where the repository does', t => {
   assert.equal(result.signing.required, true);
 });
 
+// Advances origin/main from the main checkout and fetches it into the task worktree.
+function advanceBase(f, file = 'base.txt') {
+  fs.writeFileSync(path.join(f.main, file), 'base moved\n');
+  f.git(f.main, ['add', '.']); f.git(f.main, ['commit', '-q', '-m', 'base moves']); f.git(f.main, ['push', '-q', 'origin', 'main']);
+  f.git(f.task.worktree, ['fetch', '-q', 'origin']);
+}
+
+test('publish check inspects what a merge resolution adds, like finish does on conflicts', t => {
+  const f = fixture(t);
+  f.commit({ 'a.txt': 'two\n' });
+  advanceBase(f);
+  f.git(f.task.worktree, ['merge', '-q', '--no-edit', 'origin/main']);
+  assert.equal(f.check().ok, true, 'a clean merge of the base passes');
+  assert.equal(f.check().commits, 2, 'the task commit and the merge');
+  advanceBase(f, 'base2.txt');
+  f.git(f.task.worktree, ['merge', '-q', '--no-commit', 'origin/main']);
+  fs.writeFileSync(path.join(f.task.worktree, '.env'), 'REVIEW_SENTINEL=1\n');
+  fs.writeFileSync(path.join(f.task.worktree, 'src.js'), 'const k = process.env.AUTH_API_KEY;\n');
+  f.git(f.task.worktree, ['add', '-A']); f.git(f.task.worktree, ['commit', '-q', '--no-edit']);
+  const merge = f.git(f.task.worktree, ['rev-parse', 'HEAD']).slice(0, 8);
+  const result = f.check();
+  assert.deepEqual(checks(result), ['env-file', 'malware']);
+  assert.match(result.failures.map(item => item.detail).join('\n'), new RegExp(`${merge} resolves a merge with \\.env;`));
+  assert.ok(result.signing.unsigned.includes(merge), 'merges go through signature verification');
+  f.git(f.main, ['config', 'commit.gpgsign', 'true']);
+  assert.match(f.check().failures.find(item => item.check === 'signed').detail, new RegExp(merge));
+});
+
+test('publish check refuses a merge that pulls in anything but the base', t => {
+  const f = fixture(t);
+  f.commit({ 'a.txt': 'two\n' });
+  f.git(f.task.worktree, ['checkout', '-q', '-b', 'side', 'origin/main']);
+  fs.writeFileSync(path.join(f.task.worktree, 'side.txt'), 'side\n');
+  f.git(f.task.worktree, ['add', '.']); f.git(f.task.worktree, ['commit', '-q', '-m', 'side']);
+  f.git(f.task.worktree, ['checkout', '-q', f.task.branch]);
+  f.git(f.task.worktree, ['merge', '-q', '--no-edit', 'side']);
+  const result = f.check();
+  assert.deepEqual(checks(result), ['shape']);
+  assert.match(result.failures[0].detail, /pulls in .* which is not on origin\/main/);
+});
+
+test('publish check sees a .env renamed into place, in a merge or an ordinary commit', t => {
+  const f = fixture(t);
+  f.commit({ 'a.txt': 'two\n', '.env.example': 'REVIEW_SENTINEL=1\n' });
+  advanceBase(f);
+  f.git(f.task.worktree, ['merge', '-q', '--no-commit', 'origin/main']);
+  f.git(f.task.worktree, ['mv', '.env.example', '.env']);
+  f.git(f.task.worktree, ['commit', '-q', '--no-edit']);
+  const merge = f.git(f.task.worktree, ['rev-parse', 'HEAD']).slice(0, 8);
+  assert.match(f.check().failures.map(item => item.detail).join('\n'), new RegExp(`${merge} resolves a merge with \\.env;`));
+  f.git(f.task.worktree, ['reset', '-q', '--hard', 'HEAD^']);
+  f.git(f.task.worktree, ['mv', '.env.example', '.env']);
+  f.git(f.task.worktree, ['commit', '-q', '-m', 'rename']);
+  assert.deepEqual(checks(f.check()), ['env-file']);
+});
+
+test('publish check refuses an octopus merge, whose resolution git cannot show', t => {
+  const f = fixture(t);
+  f.commit({ 'a.txt': 'two\n' });
+  // Two parents that are both on the base's history, so only the parent count can catch it.
+  const side = name => {
+    f.git(f.main, ['checkout', '-q', '-b', name, 'main']);
+    fs.writeFileSync(path.join(f.main, `${name}.txt`), `${name}\n`);
+    f.git(f.main, ['add', '.']); f.git(f.main, ['commit', '-q', '-m', name]);
+    return f.git(f.main, ['rev-parse', 'HEAD']);
+  };
+  const p = side('p'), q = side('q');
+  f.git(f.main, ['checkout', '-q', 'main']); f.git(f.main, ['merge', '-q', '--no-edit', 'p', 'q']); f.git(f.main, ['push', '-q', 'origin', 'main']);
+  f.git(f.task.worktree, ['fetch', '-q', 'origin']);
+  f.git(f.task.worktree, ['merge', '-q', '--no-commit', p, q]);
+  fs.writeFileSync(path.join(f.task.worktree, '.env'), 'REVIEW_SENTINEL=1\n');
+  f.git(f.task.worktree, ['add', '-A']); f.git(f.task.worktree, ['commit', '-q', '--no-edit']);
+  const result = f.check();
+  assert.equal(result.ok, false);
+  assert.match(result.failures.map(item => item.detail).join('\n'), /has 3 parents; only a two-parent merge of origin\/main can be checked/);
+});
+
 test('publish-check CLI reads the base branch and disabled ids from the config and exits non-zero on failure', t => {
   const f = fixture(t, { config: { disabledPatterns: ['auth-api-key'] } });
   f.commit({ 'src/x.js': 'const k = process.env.AUTH_API_KEY;\n' });
@@ -135,12 +212,13 @@ test('a task lock admits one session, resumes for the same one, and is replaced 
 test('cleanup removes a clean task worktree, marks the task done, and refuses to discard work', t => {
   const f = fixture(t);
   f.commit({ 'a.txt': 'two\n' });
+  lockTask('add-export', 'session-a', f.options);
   assert.equal(listTasks(f.options)[0].worktree, f.task.worktree);
   fs.writeFileSync(path.join(f.task.worktree, 'stray.txt'), 'wip\n');
-  assert.throws(() => cleanupTask('add-export', f.options, f.git), /uncommitted changes/);
+  assert.throws(() => cleanupTask('add-export', 'session-a', f.options, f.git), /uncommitted changes/);
   assert.ok(fs.existsSync(path.join(f.task.worktree, 'stray.txt')));
   fs.unlinkSync(path.join(f.task.worktree, 'stray.txt'));
-  const cleaned = cleanupTask('add-export', f.options, f.git);
+  const cleaned = cleanupTask('add-export', 'session-a', f.options, f.git);
   assert.equal(cleaned.worktree, 'removed');
   assert.ok(!fs.existsSync(f.task.worktree));
   assert.ok(f.git(f.main, ['rev-parse', '--verify', 'refs/heads/dev/autotask-add-export']), 'the branch is kept');
@@ -148,7 +226,44 @@ test('cleanup removes a clean task worktree, marks the task done, and refuses to
   const listed = listTasks(f.options)[0];
   assert.equal(listed.done, cleaned.done);
   assert.equal(listed.worktree, null);
-  assert.deepEqual(cleanupTask('add-export', f.options, f.git), { id: 'add-export', worktree: 'absent', done: cleaned.done, branch: 'dev/autotask-add-export' });
+  assert.deepEqual(cleanupTask('add-export', 'session-a', f.options, f.git), { id: 'add-export', worktree: 'absent', done: cleaned.done, branch: 'dev/autotask-add-export' });
+});
+
+test('cleanup needs the task lock, and leaves another session\'s task untouched', t => {
+  const f = fixture(t);
+  f.commit({ 'a.txt': 'two\n' });
+  const record = f.task.plan.replace('plan.md', 'task.json'), before = fs.readFileSync(record, 'utf8');
+  assert.throws(() => cleanupTask('add-export', '', f.options, f.git), /session ID is required/);
+  assert.throws(() => cleanupTask('add-export', 'session-b', f.options, f.git), /is not locked; take the lock/);
+  lockTask('add-export', 'active-session', f.options);
+  assert.throws(() => cleanupTask('add-export', 'session-b', f.options, f.git), /locked by another session; not cleaning it up/);
+  assert.ok(fs.existsSync(f.task.worktree), 'the other session keeps its worktree');
+  assert.equal(fs.readFileSync(record, 'utf8'), before, 'and its task record');
+  assert.equal(cleanupTask('add-export', 'active-session', f.options, f.git).worktree, 'removed');
+});
+
+test('cleanup refuses a worktree whose HEAD the task branch does not contain', t => {
+  const f = fixture(t);
+  const onBranch = f.commit({ 'a.txt': 'two\n' });
+  lockTask('add-export', 'session-a', f.options);
+  f.git(f.task.worktree, ['checkout', '-q', '--detach']);
+  const orphan = f.commit({ 'a.txt': 'three\n' }, 'detached work');
+  assert.throws(() => cleanupTask('add-export', 'session-a', f.options, f.git), new RegExp(`at ${orphan.slice(0, 12)}, which dev/autotask-add-export does not contain`));
+  assert.ok(fs.existsSync(f.task.worktree), 'the only copy of the commit survives');
+  assert.equal(listTasks(f.options)[0].done, null);
+  f.git(f.task.worktree, ['checkout', '-q', '--detach', onBranch]);
+  assert.equal(cleanupTask('add-export', 'session-a', f.options, f.git).worktree, 'removed', 'a detached HEAD already on the branch is safe');
+});
+
+test('a task ID shared by two repositories resolves only with a remote', t => {
+  const f = fixture(t);
+  const config = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  config.repos.push({ ...config.repos[0], name: 'two', remote: 'Owner/Two' });
+  fs.writeFileSync(f.file, JSON.stringify(config));
+  createTask(loadConfig(f.file, { root: f.root, repo: 'two' }), 'add-export', 'Same ID elsewhere');
+  assert.equal(listTasks({ ...f.options, remote: 'Owner/Repo' }).length, 1);
+  assert.throws(() => showTask('add-export', f.options), /exists for several repos \(Owner\/Repo, Owner\/Two\); pass --repo/);
+  assert.equal(showTask('add-export', { ...f.options, remote: 'Owner/Two' }).title, 'Same ID elsewhere');
 });
 
 test('reviewers come from the shared config, defaulting to the gh user', t => {

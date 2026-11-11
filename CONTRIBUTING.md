@@ -9,7 +9,7 @@ For a security problem, follow [SECURITY.md](SECURITY.md) instead of opening an 
 
 ## Setup
 
-You need Git 2.36+, Node.js 20+ and `ssh-keygen`, on macOS or Linux. The helpers have no
+You need Git 2.38+, Node.js 20+ and `ssh-keygen`, on macOS or Linux. The helpers have no
 dependencies and the tests need nothing installed; `npm ci` is only for the linter.
 
 ```bash

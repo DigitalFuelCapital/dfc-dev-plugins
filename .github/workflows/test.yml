@@ -58,3 +58,33 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global init.defaultBranch main
       - run: node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
+
+  release:
+    # KEY-DECISION 2026-11-11: release is a job here, not its own workflow, so it runs only
+    # after lint and every test cell pass for this exact push's SHA.
+    # When a push to main carries a plugin version that has no tag yet, tag it and publish a
+    # GitHub release with that version's CHANGELOG.md section as the notes.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags decide what is pending
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Tag and release new plugin versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node tools/release.mjs pending | while read -r plugin version tag; do
+            node tools/release.mjs notes "$plugin" > notes.md
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$plugin $version" --notes-file notes.md
+          done

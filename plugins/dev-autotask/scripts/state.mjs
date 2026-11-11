@@ -191,14 +191,29 @@ export function unlockTask(id, session, options = {}) {
 
 const gitExec = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30 * 60 * 1000 }).trimEnd();
 // After a merge (or when a task is abandoned): remove the task worktree and mark the task done.
-// Never forced: uncommitted work stops it. Records, plan.md and the branch are kept.
-export function cleanupTask(id, options = {}, git = gitExec) {
+// Only the session holding the task lock may do it, so another session's worktree is never
+// pulled out from under it. Never forced: uncommitted work stops it, and so does a HEAD the
+// task branch does not contain (a detached commit would otherwise lose its only reference).
+// Records, plan.md and the branch are kept.
+export function cleanupTask(id, session, options = {}, git = gitExec) {
+  need(text(session), 'A session ID is required; take the task lock first');
   const record = locate(id, options);
+  const lock = lockFile(record);
+  need(fs.existsSync(lock), `Task ${id} is not locked; take the lock (state.mjs lock ${id} <session>) before cleanup`);
+  need(read(lock).session === session, `Task ${id} is locked by another session; not cleaning it up`);
   const task = read(record);
   const config = loadConfig(task.config, { root: options.root, repo: task.repo });
   let worktree = 'absent';
   if (fs.existsSync(task.worktree)) {
+    const common = cwd => real(git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    need(common(task.worktree) === common(config.repo.path), `${task.worktree} is not a worktree of ${config.repo.path}; not removing it`);
     need(git(task.worktree, ['status', '--porcelain']) === '', `${task.worktree} has uncommitted changes; commit or discard them before cleanup`);
+    if (git(task.worktree, ['branch', '--show-current']) !== task.branch) {
+      const head = git(task.worktree, ['rev-parse', 'HEAD']);
+      let kept = true;
+      try { git(task.worktree, ['merge-base', '--is-ancestor', head, `refs/heads/${task.branch}`]); } catch { kept = false; }
+      need(kept, `${task.worktree} is at ${head.slice(0, 12)}, which ${task.branch} does not contain; keep it with \`git -C ${task.worktree} branch <name> ${head.slice(0, 12)}\` or move it onto ${task.branch}, then clean up`);
+    }
     git(config.repo.path, ['worktree', 'remove', task.worktree]);
     worktree = 'removed';
   }
@@ -227,7 +242,7 @@ export const addProgress = (id, note, options = {}) => update(id, options, task 
   task.progress.push({ at: new Date().toISOString(), note });
 });
 
-const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note> | lock <id> <session> [--force] | unlock <id> <session> | cleanup <id>';
+const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note> | lock <id> <session> [--force] | unlock <id> <session> | cleanup <id> <session>';
 function main(argv) {
   const options = {}, args = [];
   let force = false;
@@ -250,7 +265,7 @@ function main(argv) {
     case 'progress': return addProgress(id, rest.join(' '), scope);
     case 'lock': return lockTask(id, rest[0], { ...scope, force });
     case 'unlock': return unlockTask(id, rest[0], scope);
-    case 'cleanup': return cleanupTask(id, scope);
+    case 'cleanup': return cleanupTask(id, rest[0], scope);
     default: throw new Error(USAGE);
   }
 }

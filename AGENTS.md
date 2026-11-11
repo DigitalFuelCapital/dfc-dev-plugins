@@ -6,7 +6,7 @@ Codex reads it directly). People should start with [CONTRIBUTING.md](CONTRIBUTIN
 This is a Claude Code plugin marketplace, also installable in Codex, with two plugins:
 `dev-autofix` and `dev-autotask`.
 
-- Tests: `node --test plugins/*/tests/*.test.mjs tests/*.test.mjs`. They need Git 2.36+,
+- Tests: `node --test plugins/*/tests/*.test.mjs tests/*.test.mjs`. They need Git 2.38+,
   `ssh-keygen` and a committer identity. `tests/` checks docs, examples and manifests
   against the code.
 - Versions live in two places: `plugins/<name>/.claude-plugin/plugin.json` and

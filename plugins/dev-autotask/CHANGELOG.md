@@ -8,15 +8,24 @@ After any update, reinstall the plugin in Codex as well (see the
 - **Status.** New `/dev-autotask:status` lists every task with its PR, latest review and
   the next command, without changing anything.
 - **Task lock.** `run` and `finish` take a per-task lock (`state.mjs lock` / `unlock`),
-  so two sessions cannot work on one task at once.
+  so two sessions cannot work on one task at once. `finish` takes it before anything
+  else, including for a PR that was already merged.
 - **Publish check.** New `scripts/publish-check.mjs` runs before every push. It refuses
   uncommitted work, a credential or `.env` file in any commit, a known malware signature,
   and an unsigned commit where the repository requires signing, and lists sensitive files
-  for the PR body.
+  for the PR body. Merge commits are checked too: their signature, a merge of anything
+  but the base branch, and what the conflict resolution adds (`git show --remerge-diff`).
+  Renames count as additions, so a `.env` renamed into place is caught, and a merge with
+  more than two parents is refused because git cannot show its resolution.
 - **Reviewers.** `finish` acts on review comments from the logins in the config's
   `reviewers` list, not only the account `gh` is logged in as.
-- **Cleanup.** `state.mjs cleanup <id>` removes a clean task worktree and marks the task
-  done; `finish` runs it after a confirmed merge. `list` shows done, worktree and lock.
+- **Cleanup.** `state.mjs cleanup <id> <session>` removes a clean task worktree and
+  marks the task done; `finish` runs it after a confirmed merge. It needs the caller to
+  hold the task lock, and refuses a worktree of another repository or one whose HEAD the
+  task branch does not contain (a detached commit would otherwise lose its only
+  reference). `list` shows done, worktree and lock.
+- `status` looks a task up by the row's repository and suggests `<repo>:<id>` commands,
+  so a task ID used in two repositories cannot be confused.
 - `plan` takes the task ID as `id=<slug>`, so an ID can no longer be confused with the
   first word of a request.
 - `verify.mjs` names Windows without WSL plainly, and exports its environment pass-list so

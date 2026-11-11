@@ -9,9 +9,11 @@ import { preflight } from '../scripts/preflight.mjs';
 
 test('the runtime check names an old Git or Windows instead of failing later with usage text', () => {
   assert.deepEqual(checkRuntime({ platform: 'darwin', gitVersion: () => 'git version 2.39.5 (Apple Git-154)\n' }), { platform: 'darwin', git: '2.39' });
-  assert.deepEqual(checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.36.0' }), { platform: 'linux', git: '2.36' });
+  assert.deepEqual(checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.38.0' }), { platform: 'linux', git: '2.38' });
+  // 2.36 and 2.37 lack `merge-tree --write-tree`, which merge verification runs.
+  assert.throws(() => checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.37.1' }), /Git 2\.37 is too old: dev-autofix needs Git 2\.38 or newer/);
   assert.equal(checkRuntime({ platform: 'linux', gitVersion: () => 'git version 3.0.1' }).git, '3.0');
-  assert.throws(() => checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.34.1' }), /Git 2\.34 is too old: dev-autofix needs Git 2\.36/);
+  assert.throws(() => checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.34.1' }), /Git 2\.34 is too old: dev-autofix needs Git 2\.38/);
   assert.throws(() => checkRuntime({ platform: 'win32', gitVersion: () => 'git version 2.47.0.windows.1' }), /WSL/);
   assert.throws(() => checkRuntime({ platform: 'linux', gitVersion: () => 'not git' }), /Cannot read the Git version/);
   assert.equal(checkRuntime().platform, process.platform);
@@ -29,7 +31,7 @@ test('preflight reports a failed runtime check with its own message', async t =>
   };
   const failed = await preflight(config, [], runtime);
   assert.equal(failed.ok, false);
-  assert.deepEqual(failed.checks[0], { repo: null, check: 'runtime', ok: false, message: 'Git 2.34 is too old: dev-autofix needs Git 2.36 or newer' });
+  assert.deepEqual(failed.checks[0], { repo: null, check: 'runtime', ok: false, message: 'Git 2.34 is too old: dev-autofix needs Git 2.38 or newer' });
   const passed = await preflight(config, [], { ...runtime, checkRuntime: () => checkRuntime({ platform: 'linux', gitVersion: () => 'git version 2.43.0' }) });
   assert.equal(passed.ok, true);
   assert.equal(passed.checks[0].check, 'runtime');

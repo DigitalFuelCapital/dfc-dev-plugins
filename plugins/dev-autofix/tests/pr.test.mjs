@@ -459,6 +459,28 @@ test('run gate catches forbidden files under non-ASCII directories that Git woul
   assert.ok(result.failures.some(item => item.check === 'files' && item.detail.includes('café/package.json')), JSON.stringify(result.failures));
 });
 
+test('finish gate refuses an octopus merge, whose resolution git cannot show', t => {
+  const f = fixture(t);
+  f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
+  f.commit({ 'a.txt': 'two\n' });
+  f.git(['push', '-q', f.bare, 'fix/auto-20260927-alpha'], f.wt);
+  // Two parents that are both on the base's history, so only the parent count can catch it.
+  const side = name => {
+    f.git(['checkout', '-q', '-b', name, 'staging']);
+    fs.writeFileSync(path.join(f.main, `${name}.txt`), `${name}\n`);
+    f.git(['add', '.']); f.git(['commit', '-S', '-q', '-m', name]);
+    return f.git(['rev-parse', 'HEAD']);
+  };
+  const p = side('p'), q = side('q');
+  f.git(['checkout', '-q', 'staging']); f.git(['merge', '-S', '-q', '--no-edit', 'p', 'q']); f.git(['push', '-q', f.bare, 'staging']);
+  f.git(['merge', '-q', '--no-commit', p, q], f.wt);
+  fs.writeFileSync(path.join(f.wt, 'x.js'), "fetch('https://api.trongrid.io/x')\n");
+  f.git(['add', '-A'], f.wt); f.git(['commit', '-S', '-q', '--no-edit'], f.wt);
+  const result = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
+  assert.equal(result.ok, false);
+  assert.match(result.failures.map(item => item.detail).join('\n'), /has 3 parents; only a two-parent merge of origin\/staging can be checked/);
+});
+
 test('finish gate accepts signed worker commits on a detached HEAD', t => {
   const f = fixture(t);
   f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
