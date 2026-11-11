@@ -172,11 +172,14 @@ and ask), and a script holds anything that must not depend on a model getting it
 The helpers have no dependencies. Run the tests from the repository root:
 
 ```bash
-node --test plugins/*/tests/*.test.mjs
+node --test plugins/*/tests/*.test.mjs tests/*.test.mjs
 ```
 
-The tests build real git fixtures, so they need Git 2.36+ and a committer identity
-(`git config --global user.name` and `user.email`).
+The plugin tests build real git fixtures, so they need Git 2.36+, `ssh-keygen` and a
+committer identity (`git config --global user.name` and `user.email`). `tests/` holds
+repository-level checks that the documentation, examples and manifests agree with the
+code: versions match, Markdown links resolve, the example config and queue are valid, and
+every helper command a skill names exists.
 
 When you change a plugin:
 
