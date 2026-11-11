@@ -105,14 +105,31 @@ to make, not the fact that one exists.
 Read the area files, then write the queue yourself - do not let investigators write it
 concurrently.
 
+Use this layout. The helpers in `scripts/pr.mjs` depend on these exact headings:
+`queue inbox` needs `## Inbox`, and `queue add-fallback` needs `## Entries` and adds a row
+under `## Summary - <repo.name>`. A complete file is in the
+[example queue](../../examples/AUTOFIX_QUEUE.md).
+
+```
+# Autofix queue
+## Summary - <repo.name>    one per repo: a table of slug | status | after | title
+## Inbox                    one-liners waiting for a planning run
+## Entries                  every `### ` entry (step 7), grouped by repo, best-first
+## Dropped                  one line per rejected candidate and why
+```
+
+If an existing queue is missing one of these headings, add it; never rewrite or reorder
+entries that are already there to do so.
+
 - Dedupe by slug, by file overlap, and against open PRs.
 - Order best-first per repo: mechanical and low-risk before refactors.
 - Chain dependent entries with `after:`; a worker only takes an entry whose `after:` is
   `none` or already `merged` into the base branch; an open PR does not unlock anything.
-- Keep a `## Dropped` section with one line per rejected candidate and why. This is what
+- Add one line to `## Dropped` per rejected candidate, with the reason. This is what
   stops the next planning run from re-proposing the same bad idea.
 - Clear the `## Inbox` one-liners that got planned; leave the rest.
-- Keep a summary table per repo at the top: slug, status, after, title.
+- Keep each `## Summary - <repo.name>` table in step with its entries. The table's status
+  column holds the status word only (`needs-human`, not the decision text).
 
 ## 7. Entry format
 
@@ -131,6 +148,9 @@ Fix workers parse this. Keep the keys and their order exactly.
 - pr: <title> | <one-line body summary>
 - watch-outs: gotchas a worker would otherwise get wrong
 ```
+
+When `fallbackSearch` is on, `/dev-autofix:run` can add entries of its own with
+`status: fallback (unplanned, <date>)`. Leave those as they are.
 
 `watch-outs` is the highest-value line in the entry. Use it for the traps that have
 actually bitten this codebase: units that are not what they look like (cents vs dollars),

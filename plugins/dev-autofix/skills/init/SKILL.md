@@ -111,18 +111,20 @@ directory.
 
 ## 4. Write the config
 
-Write `autofix.config.json` against the schema at `schema/autofix.config.schema.json`
-in this plugin. Only include keys that differ from their defaults, plus `version` and
-`repos`. Run the config check in [shared workflow state](../../references/workflow-state.md)
-after writing it; do not report setup complete if required verification is missing.
+Write `autofix.config.json` against the schema at
+`<plugin>/schema/autofix.config.schema.json`. Only include keys that differ from their
+defaults, plus `version` and `repos`. Run the config check in
+[shared workflow state](../../references/workflow-state.md) after writing it; do not
+report setup complete if required verification is missing.
 
 Leave `worktreeRoot` at its default (`~/.claude/autofix/worktrees`) unless the user asks
 otherwise, and refuse any value inside a repo checkout: a nested worktree is picked up by
 that checkout's typecheck, lint and test globs.
 
 If the queue file at `queuePath` is missing, create it with the `# Autofix queue` heading
-and an empty `## Inbox` section. Preserve an existing queue when adding repos or
-refreshing machine setup.
+followed by empty `## Inbox` and `## Entries` sections, in that order. The queue helpers
+need both headings; the full layout is in `<plugin>/examples/AUTOFIX_QUEUE.md`. Preserve
+an existing queue when adding repos or refreshing machine setup.
 
 ## 5. Report
 
@@ -131,4 +133,4 @@ verify: <commands>`), the budget status from step 3, and the two next commands:
 `/dev-autofix:plan` to fill the backlog, then `/dev-autofix:run` to spend budget on it.
 
 State clearly that the user's own checkouts are never modified: every fix happens in a
-throwaway worktree under `worktreeRoot`.
+managed worktree under `worktreeRoot`, outside every checkout.

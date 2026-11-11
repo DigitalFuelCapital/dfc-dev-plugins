@@ -7,20 +7,59 @@ The weekly budget resets whether or not you use it. If the window is at 60% on a
 the other 40% expires. Autofix turns that into reviewed draft PRs for work you already
 decided was worth doing, and stops at a reserve so it never eats the budget you need.
 
-## Five pieces, one system
+**Contents:** [How it works](#how-it-works) · [Requirements](#requirements) ·
+[Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) ·
+[The queue](#the-queue) · [Reviewing and approving](#reviewing-and-approving) ·
+[Configuration](#configuration) · [Safety model](#safety-model) ·
+[State and recovery](#state-and-recovery) · [FAQ](#faq)
 
-| | What it does |
+## How it works
+
+```mermaid
+flowchart LR
+  S["budget snapshot<br/>(status line)"] -. gates .-> R
+  I["init<br/>config + wiring"] --> P["plan<br/>write the queue"]
+  P --> Q{{"you review<br/>AUTOFIX_QUEUE.md"}}
+  Q --> R["run<br/>one draft PR per fix"]
+  R --> V["review<br/>findings or LGTM"]
+  V --> F["finish<br/>address or merge"]
+  F -. "new commits need review" .-> V
+  F -. "merges unlock entries" .-> R
+```
+
+| Piece | What it does |
 |---|---|
-| **Budget snapshot** | `statusline/usage-snapshot.mjs`, piped from your status line. Persists the rate limits the skills gate on. The data source, not decoration. |
-| **`/dev-autofix:plan`** | Research. Investigates the repos, verifies findings against the base branch, writes a backlog of pre-verified one-PR fix plans. |
-| **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in reusable worktrees, gates each branch, opens one draft PR each, stops at the reserve. |
-| **`/dev-autofix:review`** | Review. Walks every PR from the last run automatically, reuses existing worktrees for validation, and posts findings or exact `LGTM` comments for `finish`. Works in Codex as `$review` too. |
-| **`/dev-autofix:finish`** | Follow-through. Reads your comment on each PR. Concerns: an Opus worker addresses them, the lead gates and pushes, then posts what was done. `LGTM`: merges only the exact approved head. Tests clean base integration locally while retaining approval of the unchanged PR head. Removes only the clean shared worktree after checking older work too. Walks the PRs the last run opened in number order, reusing run's worktrees. |
+| **Budget snapshot** | `statusline/usage-snapshot.mjs`, piped from your status line. It persists the rate limits that `plan` and `run` gate on. It is the data source, not decoration. |
+| **`/dev-autofix:init`** | Setup. Detects repos, base branches and verification commands, writes `autofix.config.json`, and wires up the budget snapshot. |
+| **`/dev-autofix:plan`** | Research. Investigates the repos, verifies every finding against the base branch, and writes a backlog of one-PR fix plans. |
+| **`/dev-autofix:run`** | Execution. Reads the budget, takes plans off the backlog, fixes them in a reusable worktree, gates each branch, opens one draft PR each, and stops at the reserve. |
+| **`/dev-autofix:review`** | Review. Walks every PR from the last run without prompting, validates in the existing worktrees, and posts findings or an exact `LGTM`. Works in Codex as `$review`. |
+| **`/dev-autofix:finish`** | Follow-through. Reads the review on each PR. Findings: an Opus worker addresses them and the lead gates and pushes. An approval of the current head: verifies it against the latest base and merges it. |
 
 Planning and fixing are separate on purpose. Planning is expensive, reads widely and needs
 judgement. Fixing is cheap, reads one plan and needs obedience. Splitting them means the
 fix loop never burns budget re-deriving what to do, and **you review the backlog before any
 code is written**.
+
+Two roles appear throughout. The **lead** is the session you invoked the skill in. A
+**worker** is a subagent the lead spawns for one fix. Workers edit, verify and commit; only
+the lead pushes, comments and merges, and only after a scripted gate passes.
+
+## Requirements
+
+- **Claude Code** for `init`, `plan`, `run` and `finish`. `review` runs in Claude Code or
+  Codex.
+- **GitHub** repos, with `gh` authenticated and allowed to push branches and open PRs.
+- **Git 2.36+** with commit signing configured (SSH or GPG). For SSH signing, set
+  `gpg.ssh.allowedSignersFile`, or the push gate cannot verify your commits.
+- **Node.js 20+**, `jq` and `shasum`, on macOS or Linux (WSL on Windows).
+- Repos with **non-interactive lint, typecheck and test commands**. The defaults assume
+  npm (`npm ci --ignore-scripts`, `package-lock.json`); set `install` and `lockfile` per
+  repo for anything else.
+- For budget gating: a **Claude subscription plan** that reports rate limits. Without one,
+  `/dev-autofix:plan` still works and `/dev-autofix:run` needs an explicit `max=N`.
+- For review alone: Codex or Claude Code, `gh`, and the config and run manifest that
+  `init` and `run` produced. Review does not need the budget snapshot.
 
 ## Install
 
@@ -34,73 +73,56 @@ wires up the budget snapshot for you: it copies the writer to `~/.claude/`, prop
 one-line addition to your existing status line (or installs the bundled one), and adds
 `refreshInterval`. It shows each change and asks before touching your global config.
 `/dev-autofix:run` re-checks the wiring every time and tells you to re-run init if a plugin
-update changed the writer. Manual steps: [statusline/README.md](statusline/README.md).
+update changed the writer. The manual steps are in
+[statusline/README.md](statusline/README.md).
 
 ### Codex
 
-Codex supports this repository's Claude-compatible marketplace and plugin manifests.
-With a current Codex CLI, register the repository and install the plugin:
+Codex reads this repository's Claude-compatible marketplace and plugin manifests (see
+[OpenAI's plugin documentation](https://developers.openai.com/plugins/build/plugins)).
+With a current Codex CLI:
 
 ```bash
 codex plugin marketplace add DigitalFuelCapital/dfc-dev-plugins
 codex plugin add dev-autofix@dfc-dev-plugins
 ```
 
-To try local changes before publishing, register the local checkout instead of the
-GitHub source, then install with the same `codex plugin add` command:
+Start a new thread after installing, then invoke `$review` from the folder that holds
+`autofix.config.json`, or from one of its repos.
 
-```bash
-codex plugin marketplace add /absolute/path/to/dfc-dev-plugins
-```
-
-Start a new thread after installation and invoke
-`$review` from the workspace containing `autofix.config.json` or one of its repos.
-The repository is the marketplace; `dev-autofix` is the plugin to install.
-
-The new review skill uses the config, manifest, and worktrees produced by Claude's run
-phase, without needing its budget snapshot or the separately installed `pr-review`
-skill. `init`, `plan`, `run`, and `finish` still contain Claude-specific setup, budget,
-or worker instructions; installing the package does not port those workflows to Codex.
-See [OpenAI's plugin compatibility documentation](https://developers.openai.com/plugins/build/plugins).
+Only `review` is written for Codex. It uses the config, run manifest and worktrees that
+Claude's `run` produced, and needs no budget snapshot. `init`, `plan`, `run` and `finish`
+contain Claude-specific setup, budget and worker instructions; installing the plugin in
+Codex does not port them.
 
 ## Quickstart
 
 ```
 /dev-autofix:init          # detect repos, write autofix.config.json, check budget wiring
-/dev-autofix:plan          # fill the backlog with verified fix plans - review it
-/dev-autofix:run           # spend leftover budget landing them as draft PRs
-/dev-autofix:review        # review every PR from that run and post findings or LGTM
-/dev-autofix:finish        # after you comment on the PRs: address concerns or merge
+/dev-autofix:plan          # fill the backlog with verified fix plans
+                           # ... read AUTOFIX_QUEUE.md, resolve needs-human entries ...
+/dev-autofix:run           # spend leftover budget landing ready entries as draft PRs
+/dev-autofix:review        # review every PR from that run; post findings or LGTM
+/dev-autofix:finish        # address findings, or merge PRs whose current head is approved
 ```
 
-**Reviewing.** Run `/dev-autofix:review` (or `$review` in Codex) to review all PRs in
-`<worktreeRoot>/last-run.json`, sequentially, without prompting between PRs. It leaves
-findings or exact `LGTM` comments under your authenticated account. Individual blockers
-are reported and the pass continues. Use `review-only` for chat results without posting.
-It can temporarily check out PR heads in existing clean run worktrees and restores
-their original branch/commit afterward. Dirty, busy, or missing worktrees use remote
-review instead. Do not run `run`, `review`, or `finish` concurrently on shared worktrees.
+Repeat `review` and `finish` until every PR is merged or parked. Each `finish` that pushes
+new commits needs another `review` before those commits can merge.
 
-You can also comment manually - an issue comment, a review body or inline comments.
-Then run `/dev-autofix:finish`. A PR is merged only when its sole pending review is an
-exact approve token (`LGTM` or `/merge` by default) bound to the current head. The review
-skill saves commit evidence; formal GitHub reviews supply `commit_id`, and manual
-conversation approvals can be bound using complete server push history. Ambiguous
-history leaves approval pending. Finish verifies a local merge with the latest base
-without pushing it, so clean PRs can merge consecutively in one pass. Publishing a
-conflict resolution or other head change requires another review. Anything else,
-including "LGTM but rename X", is treated as feedback to address.
+Do not run `run`, `review` or `finish` at the same time on one workspace. They share one
+worktree per repo and take the same lock.
 
-Finish checks every PR in `<worktreeRoot>/last-run.json`, oldest first, using the shared
-worktree for each repo. After it addresses findings, run review again for the next pass.
-Review does not apply fixes or invoke finish, and never adds finish's reply marker.
+## Commands
 
-Review `AUTOFIX_QUEUE.md` between plan and run. Entries marked `needs-human` are waiting on
-a decision only you can make; they are never auto-executed. Flip them to `ready` once you
-have decided - except `kind: security` entries, which autofix never executes and you fix
-by hand.
+| Command | Arguments | Notes |
+|---|---|---|
+| `/dev-autofix:init` | `[path-to-repo ...]` | With no paths, looks for git checkouts in the current directory and one level below. |
+| `/dev-autofix:plan` | `[repo ...] [areas=N] [per-area=N]` | `areas`: investigators to run (max 6). `per-area`: plans each should produce (default 5). |
+| `/dev-autofix:run` | `[repo ...] [reserve=N] [max=N] [model=NAME] [dry-run]` | Arguments override the config for this run only. |
+| `/dev-autofix:review` (Codex: `$review`) | `[repo ...] [pr=N ...] [review-only]` | Defaults to every PR in the last run. |
+| `/dev-autofix:finish` | `[repo ...] [pr=N ...] [dry-run]` | Defaults to every PR in the last run. |
 
-Useful arguments:
+Examples:
 
 ```
 /dev-autofix:run reserve=25      # leave a quarter of the week untouched
@@ -108,199 +130,245 @@ Useful arguments:
 /dev-autofix:run dry-run         # pick candidates and print the briefs, change nothing
 /dev-autofix:run my-app          # one repo only
 /dev-autofix:run model=haiku     # cheaper fix workers
-/dev-autofix:review             # the full last-run batch; Codex: $review
 /dev-autofix:review my-app       # review one repo's PRs from the last run
-/dev-autofix:review pr=42        # explicit PR; qualify with a repo if ambiguous
-/dev-autofix:review review-only # review in chat, no GitHub comments
+/dev-autofix:review pr=42        # an explicit PR; name the repo too if the number is ambiguous
+/dev-autofix:review review-only  # review in chat, post no GitHub comments
 /dev-autofix:finish dry-run      # show which PRs would be addressed vs merged
 /dev-autofix:finish pr=42        # one PR only
 ```
 
+## The queue
+
+`/dev-autofix:plan` writes `AUTOFIX_QUEUE.md` next to the config. Each entry is one PR: the
+problem with `file:line` evidence, exact steps, the checks that must pass, and the traps a
+worker would otherwise fall into. See the
+[example queue](examples/AUTOFIX_QUEUE.md).
+
+Read it between `plan` and `run`. An entry's `status` decides what happens to it:
+
+| Status | Meaning |
+|---|---|
+| `ready` | A worker can execute it with no judgement calls. `run` takes these in order. |
+| `needs-human (<decision>)` | Waiting on a decision only you can make. Never executed. Change it to `ready` once you have decided. |
+| `blocked (<why>)` | A worker stopped (the plan no longer matched the code, a check failed, or the push gate refused the branch). Not retried automatically. |
+| `pushed (<branch>, date)` | The branch is on the remote but its PR is not registered yet. The next `run` finishes the job. |
+| `pr-open (PR #n, date)` | A draft PR is open. |
+| `merged (PR #n, date)` | Merged into the base branch. This unlocks entries whose `after:` names it. |
+
+Entries with `kind: security` are never executed, even after you mark them `ready`. Fix
+those by hand. An entry whose `after:` names another entry waits until that entry is
+`merged`; an open PR does not unlock it.
+
+## Reviewing and approving
+
+`/dev-autofix:review` (or `$review` in Codex) reviews all PRs in
+`<worktreeRoot>/last-run.json`, one after another, and leaves one comment per PR under your
+`gh` account: either findings, or exactly `LGTM`. A blocked PR is reported and the pass
+continues. Review never fixes, pushes or merges.
+
+You can also review by hand, with a PR comment, a review body or inline comments.
+
+`/dev-autofix:finish` then classifies each PR by the comments from the configured
+`reviewers` since its last follow-up:
+
+- **Exactly one comment, and it is exactly an approve token** (`LGTM` or `/merge` by
+  default): an approval. Finish merges only if it can prove the token was given for the
+  PR's current head commit.
+- **Anything else**, including "LGTM but rename X": feedback. A worker addresses it, the
+  lead gates and pushes, and finish posts a follow-up comment listing what changed. Run
+  review again afterwards.
+
+How an approval is tied to a commit:
+
+| Approval came from | Evidence finish uses |
+|---|---|
+| `/dev-autofix:review` | The record review saved when it posted `LGTM`, which names the reviewed commit. |
+| A formal GitHub review | The review's `commit_id`. |
+| A plain `LGTM` comment you typed | The branch's push history on GitHub. If that history is incomplete or ambiguous, the approval stays pending and finish says so. |
+
+Before merging, finish tests the PR merged with the latest base locally (install, prepare
+and verify), waits for CI, re-checks the approval, and merges that exact commit. The local
+test merge is never pushed, so clean PRs can merge one after another in a single pass. If
+the PR needs a conflict resolution, finish publishes it as a new commit, and that new head
+needs another review.
+
 ## Configuration
 
-`/dev-autofix:init` writes `autofix.config.json` at the workspace root (the common parent of
-the repos, for example `~/code/`), validated by [the schema](schema/autofix.config.schema.json).
-A worked example is in [examples/autofix.config.json](examples/autofix.config.json).
+`/dev-autofix:init` writes `autofix.config.json` at the workspace root: the common parent
+of the repos (for example `~/code/`), so the config and queue never show up as untracked
+files in a checkout. It is validated by [the schema](schema/autofix.config.schema.json),
+and there is a [worked example](examples/autofix.config.json). Skills find the config in
+the current directory or any ancestor, then in `~/.claude/autofix.config.json`.
 
-The fields that matter most:
+Top-level settings:
 
-- **`baseBranch`** - what PRs target. The integration branch (for example `staging`),
-  never production.
-- **`verify`** - required nonempty commands that must pass before a PR opens or merges.
-  Fast and non-interactive;
-  nothing that starts a server, needs secrets from Infisical, or touches a database.
-- **`commandTimeoutSeconds`** (per repo) - timeout for each merge-verification install,
-  prepare and verify command; default 600 seconds, range 1-3600. Commands run with
-  `CI=1`; timed-out process groups are terminated and recorded as failures.
-- **`forbidden`** (global and per repo) - hard rules appended to every brief. Put each
-  repo's `CLAUDE.md` rules here; fix workers start with a fresh context and will not
-  otherwise know them.
-- **`reservePercent`** - the weekly budget to leave alone. A run stops at `100 - reserve`.
-- **`fallbackSearch`** - off by default. When on, a repo with an empty queue lets its
-  worker pick its own fix. That skips your backlog review, so leave it off unless you
-  mean it.
-- **`sources`** - audit documents the planner mines for candidates. Treated as dated
-  leads and re-verified before use.
-- **`reviewers`**, **`approveTokens`**, **`mergeMethod`** - whose comments
-  `/dev-autofix:finish` acts on (default: your `gh` login), which exact comments mean
-  "merge" when bound to the current head, and how (default `squash`).
+| Key | Default | Purpose |
+|---|---|---|
+| `reservePercent` | `10` | Weekly budget to leave alone. A run stops at `100 - reservePercent`. |
+| `fiveHourCeiling` | `90` | Stop when the 5-hour window reaches this percent used. |
+| `maxFixesPerRun` | `5` | Cap on PRs opened by one `run`. |
+| `perFixPercentEstimate` | `2` | Starting guess for what one fix costs, used to size parallel waves. |
+| `maxSnapshotAgeSeconds` | `900` | How old a budget reading may be before `run` treats it as stale. |
+| `workerModel` | `sonnet` | Model for fix workers. Planning uses the session's model. |
+| `maxDiffLines` | `150` | Size cap for one fix. Larger work is blocked for re-scoping. |
+| `fallbackSearch` | `false` | When on, a repo with an empty queue lets its worker pick its own fix. That skips your backlog review, so leave it off unless you mean it. |
+| `sources` | `[]` | Audit documents the planner mines for candidates. Treated as dated leads and re-verified. |
+| `forbidden` | `[]` | Hard rules appended to every worker and investigator brief. |
+| `blockPatterns` | `[]` | Extra regular expressions that must not appear on any added line. A match stops the run. |
+| `reviewers` | your `gh` login | Whose PR comments `finish` acts on. Comments from anyone else are ignored. |
+| `approveTokens` | `["LGTM", "/merge"]` | Comments that mean "merge" when they are the only pending comment. |
+| `mergeMethod` | `squash` | How `finish` merges: `squash`, `merge` or `rebase`. |
+| `coAuthor` | none | Added as a `Co-Authored-By` trailer on every autofix commit. |
+| `queuePath` | `AUTOFIX_QUEUE.md` | Backlog file, relative to the config's folder. |
+| `worktreeRoot` | `~/.claude/autofix/worktrees` | Where worktrees and run state live. Must be outside every checkout. |
+| `usageSnapshotPath` | `~/.claude/usage/latest.json` | Where the status line writes the budget snapshot. |
 
-Worktrees live under `~/.claude/autofix/worktrees`, outside every checkout. A worktree
-nested inside a repo gets swept up by that repo's `tsc`, ESLint and Vitest globs.
+Per-repo settings (`repos[]`):
+
+| Key | Default | Purpose |
+|---|---|---|
+| `name` | required | Short identifier, used for the worktree folder and in reports. |
+| `path` | required | Absolute path to your checkout. Never modified. |
+| `remote` | required | GitHub `owner/repo`. |
+| `baseBranch` | required | What PRs target. Use the integration branch (for example `staging`), never production. |
+| `verify` | required | Commands that must pass before a PR opens or merges. Keep them fast and non-interactive: nothing that starts a server, needs a secrets manager, or touches a database. |
+| `install` | `npm ci --ignore-scripts --no-audit --no-fund` | Dependency install, run in a fresh worktree or when the lockfile changes. Install scripts stay off by default because that is how a poisoned dependency runs code. |
+| `lockfile` | `package-lock.json` | File hashed to decide whether to reinstall. |
+| `prepare` | `[]` | Codegen a fresh worktree needs before typecheck passes. |
+| `testCommand` | none | Template with `{files}` for running only the tests that cover changed files. |
+| `commandTimeoutSeconds` | `600` | Timeout for each install, prepare and verify command (1 to 3600). Commands run with `CI=1`; a timed-out command is killed and recorded as a failure. |
+| `forbidden` | `[]` | Hard rules for this repo. Put its `CLAUDE.md` or `AGENTS.md` rules here: workers start with a fresh context and will not otherwise know them. |
+| `branchPrefix` | `fix/auto` | Branches are `<branchPrefix>-<yyyymmdd>-<slug>`. |
+| `env` | `[]` | Read only by dev-autotask. dev-autofix ignores it. |
 
 ## Safety model
 
 This plugin writes code and pushes branches, so the boundaries are explicit.
 
-**Invoking `/dev-autofix:run` is the authorization.** It covers `branchPrefix` branches, their
-commits and pushes, and draft PRs against `baseBranch`. Nothing else.
+### What each command is allowed to do
 
-**Review requires explicit invocation in Claude Code and Codex.** Invoking it authorizes
-review comments and temporary use of existing run worktrees. Clean reviews post exactly
-`LGTM`, which finish or other configured automation may treat as merge approval.
-`review-only` posts nothing; a do-not-merge instruction suppresses approval tokens.
-Review never fixes, commits, pushes, merges, or removes worktrees. Its comment author
-must be in `reviewers` for finish to consume the results, and `approveTokens` must
-include `LGTM` for clean approvals.
+| Command | Invoking it authorizes | It never |
+|---|---|---|
+| `run` | `branchPrefix` branches, signed commits on them, pushing them, and draft PRs against `baseBranch`. | Merges, pushes to the base branch, force-pushes, or touches your checkouts. |
+| `review` | One top-level PR comment per reviewed PR (findings or `LGTM`), and temporarily checking PR commits out in the existing run worktrees. | Fixes, commits, pushes, merges, changes draft state, or removes worktrees. |
+| `finish` | Signed commits and fast-forward pushes to a PR's own branch, PR comments, and, only for an approved current head, marking the PR ready and merging it, then cleaning up the merged branch. | Overwrites a remote branch, pushes to the base branch, merges without an approval, or acts on comments from people outside `reviewers`. |
 
-**Invoking `/dev-autofix:finish` is the authorization to follow through.** It covers
-signed commits (including merges of the base) and fast-forward pushes to the PR's own
-branch, PR comments, and - only on an exact approve token from a listed reviewer bound
-to the current head - marking the PR ready and merging the approved, verified commit.
-Cleanup preserves dirty, busy, advanced, and older/interrupted work. Remote deletion
-uses an expected-tip lease for the confirmed merged branch. Comments from anyone else
-are never acted on. Review pushes go through the same gate, adapted so the only merge
-commits allowed are ones that bring in the base; conflict resolutions are checked like
-any other code.
+`review-only` makes review post nothing. A do-not-merge instruction stops it from posting
+approve tokens. For finish to act on a review, the account that posted it must be in
+`reviewers`, and `approveTokens` must include `LGTM`.
 
-**Your checkouts are never touched.** Fixes use one shared worktree per repo. The run,
-review, and finish phases acquire the same ownership lock. The shared guard rejects
-wrong repositories, dirty trees, active Git operations, and unretained commits before
-checkout. No reset, clean, or forced worktree removal is used. Known failed
-attempts move intact to unique recovery worktrees once workers stop, allowing the next
-fix to use a fresh managed tree. Unknown changes remain in place. Confirmed stale
-worktree registrations can be pruned before recreating a deleted tree.
+### Your checkouts are never touched
 
-**Fix workers never push.** They edit, verify and commit. The lead pushes only after a
-deterministic gate passes on the branch:
+Fixes happen in one shared worktree per repo under `worktreeRoot`, outside every checkout.
+(A worktree nested inside a repo would be swept up by that repo's `tsc`, ESLint and Vitest
+globs.) `run`, `review` and `finish` take the same lock before using it. A guard refuses
+the wrong repository, a dirty tree, an in-progress Git operation, or commits that no ref
+retains. Nothing is ever reset, cleaned or force-removed. A known failed attempt is moved
+intact to a recovery folder so the next fix starts from a fresh tree; changes of unknown
+origin are left where they are and reported.
 
-- no touched `.gitignore`, `.env*`, lockfile, `package.json`, `.github/`, git hook, script
-  file or build/lint tool config (files commonly targeted by supply-chain
-  malware)
-- diff within the size cap
-- no added line matching a known malware signature or a `blockPatterns` entry - a match
-  stops the whole run and flags the machine as suspect
-- every commit signed
-- nothing left uncommitted
+### The push gate
 
-**Every fix worker is also barred from:** starting dev or preview servers, running browser
-or e2e tests, deploying, creating or running migrations, touching secrets, changing
-dependencies, acting on anything filed under a security heading, bare `git stash`,
-unsigned commits, `--no-verify`, force-pushing and pushing to the base branch.
+Workers never push. The lead pushes only after `scripts/pr.mjs gate` passes on the branch.
+It checks every outgoing commit, not just the net diff:
 
-**Every PR is a draft**, one concern, under a diff cap, with the repo's own verification
-green. `/dev-autofix:run` never merges. `/dev-autofix:finish` merges only when you
-approve the exact PR head, and only after its integration with the latest base and CI
-pass. The helper executes verification commands itself and stores results/logs. Its
-unsigned synthetic commit stays under private `refs/autofix/verify/` refs and is never
-pushed. A published head change needs review. Strict up-to-date rules may still require
-a sync and another review; merge queues remain pending until GitHub confirms the merge.
+- **Files.** No commit touches `.gitignore`, `.env*`, a lockfile, `package.json`,
+  `.github/`, `.husky/`, a shell or Windows script, or a build or lint tool config
+  (`postcss`, `eslint`, `next`, `vite`, `tsconfig`, `wrangler`, `.graphqlrc`), and none
+  makes a file executable. These are the files supply-chain malware commonly targets.
+- **Size.** The diff is within `maxDiffLines` (or the entry's stated size plus 50%, if
+  larger). Moved code counts once: a branch over the cap still passes when it is within
+  the cap after discounting lines moved as blocks of three or more, and its raw size is
+  within 1.5 × `maxDiffLines`. The PR body says when that happened.
+- **Malware signatures.** No added line matches a built-in signature or a `blockPatterns`
+  entry. A match stops the whole run and tells you to treat the machine as suspect. The
+  built-in list includes generic constructs such as `eval(`, `new Function(` and
+  `createRequire`, so a legitimate fix that needs one of those must be done by hand.
+- **Signed.** Every commit passes `git verify-commit`.
+- **Clean.** Nothing is left uncommitted.
 
-**Budget gating fails closed.** A run stops if the snapshot is missing, stale, or shows the
-reserve reached. Parallel waves are sized from twice the largest per-fix cost seen so
-far. That limits the risk of crossing the reserve but cannot rule it out, because one
-fix's cost is not known in advance; the reserve is the buffer, so size it accordingly.
+A refused branch stays local in the worktree, unpushed, and the report lists it with the
+failing check. Finish applies the same gate to the commits it adds, and also checks that
+any merge commit only brings in the base branch.
 
-**Risky work is quarantined, not attempted.** The planner marks anything that changes
-observable behaviour, touches auth or crypto, changes dependencies, needs a gate-refused
-file, or deletes code on weak evidence as `needs-human`, with the specific decision
-written out.
+### What workers are barred from
 
-## State checks and recovery
+Starting dev or preview servers, running browser or e2e tests, deploying, creating or
+running migrations, touching secrets, changing dependencies, acting on anything filed
+under a security heading, bare `git stash`, unsigned commits, `--no-verify`, force-pushing
+and pushing to the base branch. The full text is in
+[references/fix-brief.md](references/fix-brief.md).
 
-[scripts/state.mjs](scripts/state.mjs) handles ownership, worktree checks, PR registration,
-recovery and approval evidence. [scripts/preflight.mjs](scripts/preflight.mjs) checks
-delivery prerequisites and [scripts/review.mjs](scripts/review.mjs) runs review's local
-checks. [scripts/merge.mjs](scripts/merge.mjs) executes local
-integration verification and records command results itself.
-[scripts/pr.mjs](scripts/pr.mjs) owns the queue (`queue next/set-status/inbox`), fix
-briefs (`brief`, from [references/fix-brief.md](references/fix-brief.md)), the push gate
-(`gate`), publication (`publish`), approval evidence (`approval-input`) and post-merge
-cleanup (`cleanup`, `remove-worktree`). See the
-[shared state contract](references/workflow-state.md). The model still reviews code,
-waits for CI and invokes the final merge.
+### Merging
 
-Run recovery registers PRs found after an uncertain creation result before setting
-queue status to `pr-open`. Registration retries are idempotent. The latest run's manifest
-remains the default review scope; cleanup additionally checks older outstanding PRs.
+Every PR is opened as a draft: one concern, under the diff cap, with the repo's own
+verification passing. `run` never merges. `finish` merges only when you approved the exact
+PR head, its integration with the latest base passes locally, and CI and branch rules
+allow it. Branch protection still applies: a strict up-to-date rule can require a sync
+(which needs another review), and a merge queue stays pending until GitHub confirms the
+merge.
 
-Locks are not automatically stolen after a timeout. An interrupted session can leave a
-lock and unfinished work. Locks automatically find the Claude/Codex ancestor and record
-its PID, process start time and host, alongside the session and command. Use
-`inspect-lock`, `resume-lock`, or checked `break-lock` as documented in the shared
-contract. Abandoned and ownerless locks can be recovered after confirming workers have
-stopped. Shared runtime daemons remain live across conversations, so a live daemon lock
-must be released by its owning session. Review can inspect remote contents while local
-use is blocked. `state.mjs list-recovery <config-file>` reports preserved worktrees and
-the disk space they occupy, including dependencies.
+### Budget gating fails closed
 
-Durable review/approval records now live in `review/records/`; prepared comments and
-reports use `review/scratch/`. Records compare by fields, independent of JSON key order.
+A run stops if the snapshot is missing, stale, or shows the reserve reached. Parallel
+waves are sized from twice the largest per-fix cost seen so far. That limits the risk of
+crossing the reserve but cannot rule it out, because one fix's cost is not known in
+advance. The reserve is the buffer, so size it accordingly.
 
-**Version 3.3.0:** no config changes. Version 3.3 adds delivery preflight
-(`scripts/preflight.mjs`: `gh` identity and write access, origin/base, one signing probe
-that must pass `git verify-commit`) before run and finish workers, and `scripts/review.mjs verify`, which runs review's local
-checks at the exact PR head and restores the worktree. A replaced `last-run.json` is
-archived to `<worktreeRoot>/runs/`. A failed dependency install is now retried on the next
-prepare. See [shared workflow state](references/workflow-state.md).
+### Risky work is quarantined, not attempted
 
-**Version 3.2.0:** the push gate counts moved code once. A branch over the size limit
-auto-passes when its effective size (raw minus lines moved as contiguous blocks of 3+) is within the
-limit and its raw size is within 1.5 x `maxDiffLines`; the PR body says so. A user-approved
-`publish --max-diff N` covers the rest. New helpers `prepare` (worktree and dependencies) and
-`land` (verify, CI, re-check, merge, cleanup) replace the remaining hand-chained steps in run
-and finish.
+The planner marks an entry `needs-human`, with the specific decision written out, when it
+changes observable behaviour, touches auth or crypto, changes dependencies, needs a file
+the gate refuses, or deletes code on weak evidence.
 
-**Version 3.1.1:** `remove-worktree` no longer times out after 120 seconds while Git deletes a
-worktree with `node_modules`; that command now gets up to 30 minutes.
+## State and recovery
 
-**Version 3.1.0:** no config changes. The steps the first live cycle showed being
-improvised now live in `scripts/pr.mjs`. Finish binds approvals from review's records
-before falling back to push history. Cleanup treats a branch that GitHub already
-auto-deleted on merge as done. The push gate's size cap is `maxDiffLines`, or the entry's
-stated size plus 50% when that is larger. Publish refuses a PR body that drops a deploy
-step the entry names. `perFixPercentEstimate` now defaults to 2.
+Everything the skills remember lives under `worktreeRoot`
+(`~/.claude/autofix/worktrees` by default):
 
-**Version 3.0.0:** upgrading from 2.x requires nonempty `verify` commands for every repo.
-The plugin version changes; the config file still uses `version: 1`.
+| Path | Contents |
+|---|---|
+| `<repo.name>/` | The shared worktree for that repo. |
+| `last-run.json` | The run manifest: the PRs the last run opened. `review` and `finish` default to this batch. |
+| `runs/` | Earlier manifests, archived when a new run replaces `last-run.json`. |
+| `.locks/` | The run lock and one lock per repo. |
+| `plans/`, `briefs/`, `pr/` | Planner notes, worker briefs, and PR title and body files. |
+| `review/records/` | Durable review state and approval records. |
+| `review/scratch/` | Prepared comments, command logs and other temporary output. |
+| `recovery/` | Failed attempts, moved aside intact. Never cleaned up automatically. |
 
-After updating, run Claude's `/dev-autofix:init` to refresh the copied budget writer.
-Both `observed5` and `observed7` must receive fresh API observations; an idle status-line
-refresh does not renew them. Manual approvals use server push history when no saved
-record exists; incomplete evidence leaves the comment pending. Existing configs must
-supply at least one nonempty `verify` command.
+The deterministic steps are scripts, not prompts:
 
-Run the isolated regression suite from the repository root:
+| Script | Owns |
+|---|---|
+| [`scripts/state.mjs`](scripts/state.mjs) | Config check, locks, the worktree guard, PR registration, recovery, approval records. |
+| [`scripts/preflight.mjs`](scripts/preflight.mjs) | Delivery prerequisites: `gh` identity and write access, the remote base, a signing probe. |
+| [`scripts/pr.mjs`](scripts/pr.mjs) | The queue, worker briefs, the push gate, publishing, approval evidence, landing and cleanup. |
+| [`scripts/review.mjs`](scripts/review.mjs) | Review's local checks at the exact PR head. |
+| [`scripts/merge.mjs`](scripts/merge.mjs) | Local integration verification before a merge. |
 
-```bash
-node --test plugins/dev-autofix/tests/*.test.mjs
-```
+The model still reviews code and decides what to report. The full contract between the
+skills and these scripts is in [references/workflow-state.md](references/workflow-state.md).
 
-## Requirements
+**Interrupted sessions.** Locks do not expire and are never stolen after a timeout. An
+interrupted session can leave a lock and unfinished work behind. The lock records the
+owning Claude or Codex process, its start time, the host and the session. Use
+`state.mjs inspect-lock`, `resume-lock` (same session, after context compaction) or
+`break-lock` (after confirming the previous session and its workers stopped), as described
+in the [shared contract](references/workflow-state.md#config-and-ownership).
 
-- For review alone: Codex or Claude Code, authenticated `gh` (or a GitHub connector),
-  the existing autofix config and run manifest, and `git` for optional worktree tests.
-- For the Claude budget workflow: a Claude subscription plan that exposes rate limits.
-  Without one, `/dev-autofix:plan` still works and `/dev-autofix:run` needs an explicit `max=N`.
-- `git` with commit signing configured, `gh` (authenticated), `node`, `jq`
-- Repos with non-interactive lint/typecheck/test commands
+**Recovery folders.** `state.mjs list-recovery <config-file>` lists preserved worktrees and
+the disk space they use, dependencies included. Run and finish include it in their
+reports. Nothing there is deleted for you.
+
+**Uncertain PR creation.** If a branch was pushed but the PR could not be confirmed, the
+entry stays `pushed`. The next run looks the PR up and registers it before continuing.
 
 ## FAQ
 
 **Does it merge anything?** Only through `/dev-autofix:finish`, when an exact approve
 token is bound to the current PR head, local integration with the latest base passes
-verification, and required CI/branch rules allow merging. Clean integration preserves
-approval; publishing a new PR head requires review. Nothing is pushed directly to the
+verification, and CI and branch rules allow merging. Nothing is pushed directly to the
 base branch or force-pushed over existing work.
 
 **What if the queue is empty?** With `fallbackSearch` off (the default), the repo is
@@ -313,8 +381,37 @@ base moved and the queue needs re-planning.
 **What happens to a branch the gate refuses?** It stays local in the worktree, unpushed,
 and the report lists it with the failing check so you can inspect it.
 
+**Review posted `LGTM` but finish did not merge. Why?** Finish reports a classification
+per PR. `stale` means the approval was for an earlier commit; review the new head.
+`evidence-unavailable` means the approval could not be tied to a commit (for example the
+comment was edited, or GitHub's push history is incomplete). Finish leaves it pending;
+delete that comment and approve again with `/dev-autofix:review` or a formal GitHub
+review. `address` means the approval was not the only pending comment, or was not an exact
+token, so it was treated as feedback.
+
+**`run` says the snapshot is stale.** A budget reading only refreshes when a session gets
+an API response; an idle status line refresh does not count. Send any message in the
+session and re-run. See [statusline/README.md](statusline/README.md).
+
+**`run` says the writer differs.** A plugin update changed the snapshot writer. Run
+`/dev-autofix:init` to copy the new one.
+
 **Why keep "draft" out of PR titles?** Some review bots skip anything that looks
 draft-titled. The PR itself is still opened as a draft.
+
+## Upgrading
+
+Release notes are in [CHANGELOG.md](CHANGELOG.md). After any update, run
+`/dev-autofix:init` to refresh the copied budget writer. Upgrading from 2.x requires at
+least one nonempty `verify` command for every repo.
+
+## Development
+
+Run the test suite from the repository root:
+
+```bash
+node --test plugins/dev-autofix/tests/*.test.mjs
+```
 
 ## License
 

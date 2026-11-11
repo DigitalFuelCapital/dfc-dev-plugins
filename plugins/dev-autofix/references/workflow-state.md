@@ -5,6 +5,16 @@ the installed plugin root, two directories above a skill's directory. The helper
 `<plugin>/scripts/state.mjs`. It returns JSON and exits nonzero on a failed check. Do
 not continue a dependent action after failure. Shell-quote paths and arguments.
 
+Sections: [Helpers](#helpers) · [Files on disk](#files-on-disk) ·
+[Config and ownership](#config-and-ownership) ·
+[Worktree preparation and recovery](#worktree-preparation-and-recovery) ·
+[Dependency cache format](#dependency-cache-format) ·
+[PR registration and recovery](#pr-registration-and-recovery) ·
+[Delivery preflight](#delivery-preflight) ·
+[Local review validation](#local-review-validation) ·
+[Approval records](#approval-records) ·
+[Verification for batch merges](#verification-for-batch-merges)
+
 ## Helpers
 
 | Command | Does |
@@ -23,6 +33,33 @@ not continue a dependent action after failure. Shell-quote paths and arguments.
 | `pr.mjs land` | verify, CI wait, approval re-check, merge, cleanup for one approved PR |
 | `merge.mjs verify / check / release` | local integration verification (used by `land`) |
 | `pr.mjs cleanup / remove-worktree` | post-merge queue, branch and worktree cleanup |
+
+## Files on disk
+
+Everything below is under `<worktreeRoot>` (default `~/.claude/autofix/worktrees`), outside
+every checkout. Skills read and write these through the helpers; never hand-edit a
+manifest, record, receipt or lock.
+
+| Path | Written by | Contents |
+|---|---|---|
+| `<repo.name>/` | `pr.mjs prepare` | The shared, single-occupancy worktree for that repo. |
+| `<repo.name>.lock.sha` | install step | Lockfile digest of the last successful install ([format](#dependency-cache-format)). |
+| `<repo.name>.prepared` | `pr.mjs prepare` | Marker that `repo.prepare` succeeded for the current tree. |
+| `.locks/run`, `.locks/repo-<repo.name>` | `state.mjs lock` | The run lock and one lock per repo. |
+| `last-run.json` | `state.mjs record-pr` | Manifest of the PRs the latest run registered. |
+| `runs/<startedAt>.json` | `state.mjs record-pr` | Earlier manifests, archived when a new run replaces `last-run.json`. |
+| `plans/<area>.md` | plan investigators | Investigation notes that plan merges into the queue. |
+| `briefs/<slug>.md` | `pr.mjs brief` | The rendered worker brief. |
+| `pr/<slug>.md` | fix worker | PR title (first line) and body. `publish` writes `pr/<slug>.body.md` beside it. |
+| `review/records/` | review, `state.mjs record-approval` | Approval records and review's per-round state. |
+| `review/records/validation/`, `review/records/verification/` | `review.mjs`, `merge.mjs` | Receipts for local review checks and merge verification. |
+| `review/scratch/` | all phases | Prepared comments, approval inputs and command logs. |
+| `recovery/<repo.name>-<UUID>/` and `.json` | `state.mjs quarantine` | A failed attempt moved aside intact, with its receipt. |
+
+The helpers also keep private refs in each repo: `refs/autofix/verify/` for merge
+verification and `refs/autofix/review/` for review checks. Neither is ever pushed.
+
+The queue (`queuePath`, default `AUTOFIX_QUEUE.md`) lives beside the config, not here.
 
 ## Config and ownership
 

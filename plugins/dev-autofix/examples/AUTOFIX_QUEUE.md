@@ -3,18 +3,29 @@
 Pre-verified fix plans consumed by `/dev-autofix:run`. Written by `/dev-autofix:plan`.
 
 Each entry is one PR. A worker takes the first `status: ready` entry for its repo whose
-`after:` is `none` or names an entry already `merged` into the base branch, executes the plan as written, and the
-lead updates `status:` afterwards. `needs-human` entries wait for the decision written in
-their status line; flip them to `ready` once you have decided.
+`after:` is `none` or names an entry already `merged` into the base branch, executes the
+plan as written, and the lead updates `status:` afterwards. `needs-human` entries wait for
+the decision written in their status line; change them to `ready` once you have decided.
 
-## worker (1 ready, 1 needs-human)
+The helpers rely on this layout: one `## Summary - <repo>` table per repo, then
+`## Inbox`, `## Entries` and `## Dropped`. Keep those headings as they are.
+
+## Summary - my-api
 
 | slug | status | after | title |
 |---|---|---|---|
 | drop-unused-cors-helper | ready | none | Remove the unreferenced withCors wrapper |
 | tighten-token-compare | needs-human | none | Compare access tokens in constant time |
 
-### drop-unused-cors-helper · worker · Remove the unreferenced withCors wrapper
+## Inbox
+
+One-liners noticed by fix workers, for the next `/dev-autofix:plan` to investigate:
+
+- `src/routes/health.ts` swallows errors in a bare catch, returns 200 regardless
+
+## Entries
+
+### drop-unused-cors-helper · my-api · Remove the unreferenced withCors wrapper
 - status: ready
 - kind: mechanical
 - risk: low · size: ~30 changed lines · deps-change: no
@@ -35,7 +46,7 @@ their status line; flip them to `ready` once you have decided.
 - watch-outs: Do not touch `honoCors` or the allowed-origins list. The two names are one
   character apart in the import block.
 
-### tighten-token-compare · worker · Compare access tokens in constant time
+### tighten-token-compare · my-api · Compare access tokens in constant time
 - status: needs-human (is a timing-safe compare worth the added dependency on node:crypto here, or should this move behind the gateway instead?)
 - kind: security
 - risk: medium · size: ~15 changed lines · deps-change: no
@@ -56,9 +67,3 @@ their status line; flip them to `ready` once you have decided.
 - `rewrite-order-pipeline` - ~900 changed lines across 14 files. Too large for one PR and
   not splittable without a design decision.
 - `bump-drizzle` - dependency change; out of scope for autofix.
-
-## Inbox
-
-One-liners noticed by fix workers, for the next `/dev-autofix:plan` to investigate:
-
-- `src/routes/health.ts` swallows errors in a bare catch, returns 200 regardless

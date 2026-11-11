@@ -21,8 +21,8 @@ PR. Never push to the base branch, never force-push, never merge.
 2. **Worktree.** If `task.worktree` exists, resume there: keep uncommitted work and
    read `task.progress`. Otherwise run `git -C <task.path> fetch origin` (allow at
    least 120s), then `git -C <task.path> worktree add -b <branch> <worktree>
-   origin/<baseBranch>`, or `git worktree add <worktree> <branch>` if the branch
-   already exists. Never switch or edit the main checkout.
+   origin/<baseBranch>`, or `git -C <task.path> worktree add <worktree> <branch>` if
+   the branch already exists. Never switch or edit the main checkout.
 3. **Implement** the milestones in order inside the worktree. Follow the repository's
    instructions, `task.forbidden`, and its commit-signing rules. Add tests for the
    acceptance criteria. Commit each milestone with explicit paths, then record it:

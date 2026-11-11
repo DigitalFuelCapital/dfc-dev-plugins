@@ -12,9 +12,9 @@ the last run**, one repo at a time in config order, ascending PR number within e
 repo. Complete the whole pass without asking to move to the next PR. Findings, closed
 PRs, and individual validation failures do not end the pass.
 
-This is the review phase between `run` and `finish`. It follows the single-PR
-`pr-review` contract, reproduced here so that skill need not be installed separately.
-Do not invoke `run` or `finish`, fix source, or merge anything during this phase.
+This is the review phase between `run` and `finish`. The skill is self-contained: it
+needs no other review skill installed. Do not invoke `run` or `finish`, fix source, or
+merge anything during this phase.
 
 ## Authorization and client support
 
@@ -45,7 +45,8 @@ to the config directory. Use `repos[].remote` for every GitHub operation. A miss
 config is a batch blocker: report it and suggest Claude's `/dev-autofix:init` or an
 existing config; do not initialize Claude settings in Codex.
 
-Read [shared workflow state](../../references/workflow-state.md). Run its config check
+Read [shared workflow state](../../references/workflow-state.md). `<plugin>` below is
+this plugin's root, two directories above this skill's directory. Run the config check
 before local validation; missing verification blocks readiness, but other PRs may still
 be inspected remotely. Use its repo ownership lock and worktree check for local work,
 and its immutable approval record format when publishing `LGTM`.

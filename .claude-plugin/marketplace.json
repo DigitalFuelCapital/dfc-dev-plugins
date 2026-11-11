@@ -12,7 +12,7 @@
       "name": "dev-autofix",
       "source": "./plugins/dev-autofix",
       "description": "Plan and run small fixes as signed draft PRs, review the full batch in Claude Code or Codex, then address findings and merge on approval",
-      "version": "3.3.2",
+      "version": "3.3.3",
       "author": {
         "name": "Digital Fuel Capital"
       }
@@ -21,7 +21,7 @@
       "name": "dev-autotask",
       "source": "./plugins/dev-autotask",
       "description": "Complete one large task as one PR (optionally from a local security audit): Claude plans and implements, Codex reviews, merge only on explicit request",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "author": {
         "name": "Digital Fuel Capital"
       }

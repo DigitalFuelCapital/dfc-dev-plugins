@@ -24,6 +24,9 @@ never force-pushes, and never touches the user's own checkouts.
 after the push gate (step 5) passes. A worker is a model that can be wrong or misled; the
 gate is a check that cannot.
 
+**Names used below.** `<plugin>` is this plugin's root, two directories above this
+skill's base directory. `<config-file>` is the resolved path of `autofix.config.json`.
+
 ## 1. Load config
 
 Resolve `autofix.config.json` from the current directory or any ancestor, else
@@ -33,8 +36,10 @@ holding the config; expand `~` in `worktreeRoot` and `usageSnapshotPath`.
 
 Read [shared workflow state](../../references/workflow-state.md) and run its config
 check. Require nonempty verification commands; acquire the run lock before recovery or
-publication and each repo lock before worktree use. Release owned locks in a finally
-step after workers stop. A busy repo is skipped, never reset.
+publication and each repo lock before worktree use. Acquiring them returns the `runToken`
+and `repoToken` that the helpers below take; also persist one ISO `startedAt` for this
+invocation. Release owned locks in a finally step after workers stop. A busy repo is
+skipped, never reset.
 
 Unless `dry-run`, run [delivery preflight](../../references/workflow-state.md#delivery-preflight)
 for the selected repos before installing dependencies or launching workers:

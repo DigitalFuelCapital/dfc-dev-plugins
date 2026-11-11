@@ -50,7 +50,7 @@ acquire the repo lock before any worktree activity, and use its approval checker
 owned locks in a finally step after workers stop. Never continue a dependent action when
 a helper fails. With `dry-run`, classify without acquiring locks or writing records.
 
-Print the budget line from `/dev-autofix:run` step 2. Review is human-initiated work, not
+Print the budget line from `/dev-autofix:run` step 2. Finish is human-initiated work, not
 leftover-budget work, so it does **not** gate on `reservePercent`. It does stop if
 `pct5 >= fiveHourCeiling`, and it says so if the snapshot is stale or unavailable but
 carries on. Assess freshness using `observed5`/`observed7` and future reset times;
@@ -58,6 +58,7 @@ a stale five-hour reading must not be treated as a current ceiling breach.
 
 ## 2. Find PRs with a pending review
 
+`<plugin>` is this plugin's root, two directories above this skill's base directory, and
 `<pr>` below is `node <plugin>/scripts/pr.mjs`. Every helper prints JSON and exits nonzero
 on a refusal; never continue a dependent step after one.
 
@@ -160,7 +161,8 @@ git merge-base --is-ancestor origin/<baseBranch> HEAD || git merge --no-edit -S 
   shared quarantine procedure, and report which files need human resolution. Leave the
   queue entry `pr-open` and continue to the next PR on a fresh managed tree.
 
-Signing follows the `/dev-autofix:run` rules: never `--no-gpg-sign`; if the agent socket
+Signing follows the rules in the [fix brief](../../references/fix-brief.md): never
+`--no-gpg-sign`; if the agent socket
 is unreachable under a sandbox, retry that one command with the sandbox disabled.
 
 ## 6. Address - the Opus worker
@@ -190,8 +192,8 @@ order. Brief:
 > is already satisfied, say so with evidence instead of changing code. Keep changes
 > scoped to what the comments ask for.
 >
-> Hard rules: {the full hard-rules paragraph from /dev-autofix:run step 4, plus
-> config.forbidden and repo.forbidden}. If a comment needs a file the push gate refuses
+> Hard rules: {the full "Hard rules." paragraph from `<plugin>/references/fix-brief.md`,
+> plus config.forbidden and repo.forbidden}. If a comment needs a file the push gate refuses
 > (`.gitignore`, `.env*`, lockfiles, `package.json`, `.github/`, `.husky/`, scripts,
 > build/lint tool config), or touches anything security-related, do not attempt it -
 > report it as "needs human".
