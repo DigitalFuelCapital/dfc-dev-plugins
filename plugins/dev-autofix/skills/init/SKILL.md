@@ -59,6 +59,12 @@ Decide each field:
   its hard rules as one-line entries (for example "do not write tests unless asked",
   "never edit generated types"). Workers run with a fresh context and will not otherwise
   know them. Confirm the list with the user.
+- **`env`** - the *names* (never values) of environment variables that the install,
+  prepare and verify commands need, for example `NPM_TOKEN` for a private registry. The
+  helpers run those commands with a minimal environment (`PATH`, `HOME`, locale, temp and
+  package-manager cache variables, plus `CI=1`), so anything not listed here is absent.
+  Ask the user; most repos need none. Prefer credentials in files under `HOME` (such as
+  `~/.npmrc`) over passing tokens through.
 - **`testCommand`** - a template with `{files}` for running only the tests covering
   changed files. Omit when the repo has no unit runner.
 - **`install`** - keep the default `npm ci --ignore-scripts --no-audit --no-fund` unless
@@ -121,10 +127,10 @@ Leave `worktreeRoot` at its default (`~/.claude/autofix/worktrees`) unless the u
 otherwise, and refuse any value inside a repo checkout: a nested worktree is picked up by
 that checkout's typecheck, lint and test globs.
 
-If the queue file at `queuePath` is missing, create it with the `# Autofix queue` heading
-followed by empty `## Inbox` and `## Entries` sections, in that order. The queue helpers
-need both headings; the full layout is in `<plugin>/examples/AUTOFIX_QUEUE.md`. Preserve
-an existing queue when adding repos or refreshing machine setup.
+Then run `node <plugin>/scripts/pr.mjs queue init <config-file>`. It creates the queue
+skeleton at `queuePath` when the file is missing, with the headings the queue helpers
+need. It never overwrites: for an existing queue it only reports `errors` and `warnings`.
+Relay those to the user; do not rewrite an existing queue to clear them.
 
 ## 5. Report
 

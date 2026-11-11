@@ -28,6 +28,18 @@ const canonical = (value) => {
   }
 };
 
+// The helpers shell out to /bin/sh, ps and POSIX process groups, and use `git worktree list -z`
+// and `git show --remerge-diff`, both new in Git 2.36. Older Git fails later with usage text.
+export const MIN_GIT = [2, 36];
+export function checkRuntime({ platform = process.platform, gitVersion = () => execFileSync('git', ['--version'], { encoding: 'utf8' }) } = {}) {
+  requireValue(platform !== 'win32', 'dev-autofix needs a POSIX shell and process groups; on Windows, run Claude Code or Codex inside WSL');
+  const match = /(\d+)\.(\d+)/.exec(gitVersion());
+  requireValue(match, 'Cannot read the Git version; is git on PATH?');
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  requireValue(major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1]), `Git ${major}.${minor} is too old: dev-autofix needs Git ${MIN_GIT.join('.')} or newer`);
+  return { platform, git: `${major}.${minor}` };
+}
+
 export function writeAtomic(file, value, { exclusive = false } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomUUID()}.tmp`;
@@ -155,6 +167,7 @@ export function validateConfig(config) {
     requireValue(nonempty(repo.baseBranch), `${repo.name}: baseBranch is required`);
     requireValue(Array.isArray(repo.verify) && repo.verify.length > 0 && repo.verify.every(nonempty), `${repo.name}: configure nonempty verify commands before proceeding`);
     requireValue(repo.commandTimeoutSeconds === undefined || (Number.isSafeInteger(repo.commandTimeoutSeconds) && repo.commandTimeoutSeconds >= 1 && repo.commandTimeoutSeconds <= 3600), `${repo.name}: commandTimeoutSeconds must be an integer from 1 to 3600`);
+    requireValue(repo.env === undefined || (Array.isArray(repo.env) && repo.env.every(name => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))), `${repo.name}: env must be a list of variable names (never values)`);
   }
   const worktreeRoot = config.worktreeRoot ?? '~/.claude/autofix/worktrees';
   requireValue(nonempty(worktreeRoot), 'worktreeRoot must be a path');
@@ -354,7 +367,7 @@ export function listRecovery(config) {
 
 function main([command, ...args]) {
   switch (command) {
-    case 'config': validateConfig(read(args[0])); return 'Config checks passed';
+    case 'config': checkRuntime(); validateConfig(read(args[0])); return 'Config checks passed';
     case 'lock': requireValue(args[1], 'lock requires an identity JSON file'); return acquireLock(args[0], read(args[1]));
     case 'inspect-lock': return inspectLock(args[0]);
     case 'resume-lock': return resumeLock(args[0], read(args[1]));

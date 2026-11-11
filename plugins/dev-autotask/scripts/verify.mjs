@@ -12,12 +12,12 @@ export const DEFAULT_INSTALL = 'npm ci --ignore-scripts --no-audit --no-fund'; /
 // KEY-DECISION 2026-11-06: commands get a minimal environment, not process.env, so repo
 // scripts (and security regression tests) never see the caller's tokens or credentials.
 // Install tools still find their config and caches through HOME and these variables.
-const PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TERM', 'LANG', 'LC_ALL', 'TZ',
+export const COMMAND_ENV_PASS = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'TERM', 'LANG', 'LC_ALL', 'TZ',
   'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'npm_config_cache', 'NPM_CONFIG_CACHE', 'NVM_DIR', 'VOLTA_HOME',
   'PNPM_HOME', 'COREPACK_HOME', 'YARN_CACHE_FOLDER'];
 // repo.env (an optional autofix.config.json repo field) names extra variables to pass through (e.g. DATABASE_URL); values never live in config.
 export const commandEnv = (source = process.env, extra = []) =>
-  ({ ...Object.fromEntries([...PASS, ...extra].filter(k => source[k] !== undefined).map(k => [k, source[k]])), CI: '1' });
+  ({ ...Object.fromEntries([...COMMAND_ENV_PASS, ...extra].filter(k => source[k] !== undefined).map(k => [k, source[k]])), CI: '1' });
 
 // One command in its own process group. When the shell exits (pass, fail or timeout) the
 // group is stopped and awaited, so no background child outlives verification.

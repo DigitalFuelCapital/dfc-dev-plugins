@@ -4,7 +4,8 @@ Claude Code plugin marketplace for DFC developer tooling. Plugins: `dev-autofix`
 `dev-autotask`. Split out of `DigitalFuelCapital/dfc-claude-plugin` (history preserved) so it
 can evolve and be shared independently of the client-facing DFC plugins.
 
-- Tests: `node --test plugins/*/tests/*.test.mjs`
+- Tests: `node --test plugins/*/tests/*.test.mjs tests/*.test.mjs` (`tests/` checks docs,
+  examples and manifests against the code)
 - Versions live in two places: `plugins/<name>/.claude-plugin/plugin.json` and
   `.claude-plugin/marketplace.json` - keep them in sync.
 - Record every behaviour change, including `SKILL.md` wording, in the plugin's
