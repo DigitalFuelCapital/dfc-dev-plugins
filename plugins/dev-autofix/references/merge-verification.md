@@ -25,7 +25,9 @@ unfinished work using the [recovery procedure](worktrees.md). A crash leaves a n
 Each install, prepare and verify command that a helper runs (in `prepare`, review
 validation and merge verification) gets a minimal environment: `CI=1`, plus `PATH`,
 `HOME`, locale, temp and package-manager cache variables, plus the names listed in
-`repo.env`. Tokens in the caller's shell are not passed through. Commands a fix worker
+`repo.env`. Tokens in the caller's shell are not passed through. This is environment hygiene, not a
+filesystem sandbox: commands still read files under `HOME` (`~/.npmrc`, `~/.netrc`, cloud
+credentials), which is what lets authenticated installs work. Commands a fix worker
 runs itself use the worker's own shell and are not covered by this.
 
 Each of those commands also has a per-command timeout:
@@ -55,8 +57,10 @@ mergeability at two-second intervals for up to 30 seconds. Conflicts and other e
 return promptly; a timeout leaves approval pending. Base movement requires a new
 verification run, not a new approval of the unchanged head. A changed PR head requires
 fresh approval evidence.
-Prepare runs for each integration; install runs when dependencies are missing or the
-lockfile changed, using the shared digest-only [cache](worktrees.md#dependency-cache-format). Both are included in the
+Prepare runs for each integration; install runs when the lockfile digest changed, or
+when `installMarker` (default `node_modules`) is missing from the tree even though the
+digest matches, as in a fresh worktree; `installMarker: ""` trusts the digest alone. See
+the shared [cache](worktrees.md#dependency-cache-format). Both are included in the
 execution log, alongside every verify command.
 
 These receipts prevent accidental skipped checks; they are not a security boundary

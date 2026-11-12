@@ -152,6 +152,9 @@ pinned to the reviewed commit, plus two scripted guards:
   unsigned commit in a repository that has `commit.gpgsign` on. It also lists the
   sensitive files the branch touches (CI, dependency manifests, lockfiles, scripts, build
   files) so they are called out in the PR.
+- **Reviews read by a script.** `scripts/review.mjs` picks the latest review from the
+  configured reviewers and binds it to the commit it names. `finish` merges only an exact,
+  unedited LGTM for the current head, pinned with `--match-head-commit`.
 
 ## Configuration
 

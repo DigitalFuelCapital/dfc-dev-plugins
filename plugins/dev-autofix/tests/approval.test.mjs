@@ -59,10 +59,10 @@ function approvalRuntime({ head = HEAD, issues = [], reviews = [], inline = [], 
 const comment = (id, body, at, extra = {}) => ({ id, body, user: { login: 'reviewer' }, html_url: `https://github.com/owner/repo/pull/7#issuecomment-${id}`, created_at: at, updated_at: at, ...extra });
 const config = { version: 1, reviewers: ['reviewer'], repos: [] };
 const repo = { name: 'repo', remote: 'owner/repo', baseBranch: 'staging' };
-const build = (t, options) => {
+const build = (t, options, useConfig = config) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'autofix-approval-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return buildApprovalInput({ config, repo, number: 7, root }, approvalRuntime(options));
+  return buildApprovalInput({ config: useConfig, repo, number: 7, root }, approvalRuntime(options));
 };
 
 test('approval input binds a self-describing approval from the comment alone', t => {
@@ -107,4 +107,37 @@ test('both spellings of the follow-up marker end a review round', t => {
     assert.equal(next.classification, 'approve', marker);
     assert.deepEqual(next.pending.map(item => item.id), [33]);
   }
+});
+
+test('feedback in the same second as a marker stays pending unless the marker names it', t => {
+  const at = '2026-09-27T18:10:00Z';
+  const issues = [comment(31, 'rename x', '2026-09-27T18:00:00Z'), comment(32, 'also fix y', at), comment(33, 'Done.\n<!-- dev-autofix:finish addressed=31 -->', at)];
+  const result = build(t, { issues });
+  assert.equal(result.classification, 'address');
+  assert.deepEqual(result.pending.map(item => item.id), [32]);
+  issues[2] = comment(33, 'Done.\n<!-- dev-autofix:finish addressed=31,32 -->', at);
+  assert.equal(build(t, { issues }).classification, 'awaiting review');
+});
+
+test('a quoted, inline or mid-line marker does not end a review round', t => {
+  const fenced = fence => `The marker looks like this:\n${fence}\n<!-- dev-autofix:finish addressed=31 -->\n${fence}\nPlease fix x first.`;
+  // A line that is not a valid closing fence keeps the block open, so the marker after it is still an example.
+  const notClosed = (open, fake) => `Example:\n${open}\n${fake}\n<!-- dev-autofix:finish addressed=31 -->\n${open}`;
+  const examples = ['> <!-- dev-autofix:finish addressed=31 -->', 'see <!-- dev-autofix:finish addressed=31 --> above', fenced('```'), fenced('~~~'), fenced('````'),
+    notClosed('~~~', '~~~html'), notClosed('```', '```js'), notClosed('~~~', '    ~~~'), notClosed('```', '    ```'), notClosed('````', '```'), notClosed('```', '~~~')];
+  for (const body of examples) {
+    const issues = [comment(31, 'rename x', '2026-09-27T18:00:00Z'), comment(32, body, '2026-09-27T18:10:00Z')];
+    assert.deepEqual(build(t, { issues }).pending.map(item => item.id), [31, 32], body);
+  }
+  const inline = [{ id: 41, body: '<!-- dev-autofix:finish addressed=31 -->', user: { login: 'reviewer' }, html_url: 'https://github.com/owner/repo/pull/7#discussion_r41', path: 'a.js', line: 1, created_at: '2026-09-27T18:10:00Z' }];
+  assert.deepEqual(build(t, { issues: [comment(31, 'rename x', '2026-09-27T18:00:00Z')], inline }).pending.map(item => item.id), [31, 41]);
+});
+
+test('a marker from the finishing account counts even when it is not a configured reviewer', t => {
+  const reviewersOnly = { ...config, reviewers: ['codex-bot'] };
+  const byBot = (id, body, at) => ({ ...comment(id, body, at), user: { login: 'codex-bot' } });
+  const issues = [byBot(31, 'rename x', '2026-09-27T18:00:00Z'), comment(32, 'Done.\n<!-- dev-autofix:finish addressed=31 -->', '2026-09-27T18:10:00Z')];
+  assert.equal(build(t, { issues }, reviewersOnly).classification, 'awaiting review');
+  const stranger = [issues[0], { ...issues[1], user: { login: 'someone-else' } }];
+  assert.equal(build(t, { issues: stranger }, reviewersOnly).classification, 'address', 'nobody else can close a round');
 });

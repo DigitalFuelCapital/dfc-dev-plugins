@@ -66,7 +66,10 @@ export function status(configFile, { now = Date.now(), runtimeCheck = checkRunti
     try {
       const { owner, createdAt } = inspectLock(path.join(locks, name));
       result.locks.push({ name, createdAt, owner: owner ? { session: owner.session, command: owner.command, host: owner.host, pid: owner.pid } : null });
-    } catch { /* a lock released while we looked */ }
+    } catch (error) {
+      // A lock released while we looked is simply gone; anything else is reported, not hidden.
+      if (error.code !== 'ENOENT') result.locks.push({ name, error: error.message });
+    }
   }
   result.worktrees = config.repos.map(repo => ({ repo: repo.name, path: path.join(root, repo.name), exists: fs.existsSync(path.join(root, repo.name)) }));
   result.recovery = fs.existsSync(root) ? listRecovery(config) : { entries: [], allocatedBytes: 0 };

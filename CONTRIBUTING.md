@@ -9,8 +9,10 @@ For a security problem, follow [SECURITY.md](SECURITY.md) instead of opening an 
 
 ## Setup
 
-You need Git 2.38+, Node.js 20+ and `ssh-keygen`, on macOS or Linux. The helpers have no
-dependencies and the tests need nothing installed; `npm ci` is only for the linter.
+You need Git 2.38+, `ssh-keygen` and Node.js `^20.19.0`, `^22.13.0` or 24+ (the range
+ESLint supports), on macOS or Linux. The plugins themselves run on any Node 20+. The
+helpers have no dependencies and the tests need nothing installed; `npm ci` is only for
+the linter.
 
 ```bash
 git clone https://github.com/DigitalFuelCapital/dfc-dev-plugins

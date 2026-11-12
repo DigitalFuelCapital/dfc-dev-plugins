@@ -17,12 +17,12 @@ Read-only. Do not edit, commit, push, comment, merge, lock or clean up anything.
    With a task ID argument, report that task only. With no tasks, say so and suggest
    `/dev-autotask:plan`.
 2. **PR state.** For each task that has a `pr` and is not `done`:
-   `gh pr view <pr> --repo <remote> --json state,isDraft,headRefOid,url,comments`.
-   The reviewers are the `reviewers` from `<state> --remote <remote> show <id>` (the
-   row's `remote`: task IDs are unique only within one repository), or the authenticated
-   user (`gh api user --jq .login`) when that is null. The latest review is the newest
-   comment by a reviewer that contains a `Reviewed head: <sha>` line. If `gh` is
-   unavailable, say the PR state could not be read and report the rest.
+   `gh pr view <pr> --repo <remote> --json state,isDraft,url` for the state, and
+   `gh pr view <pr> --repo <remote> --json headRefOid,comments | node
+   <plugin>/scripts/review.mjs --remote <remote> <id> --login <gh api user --jq .login>`
+   for the latest review (the row's `remote`: task IDs are unique only within one
+   repository). If `gh` is unavailable, say the PR state could not be read and report
+   the rest.
 3. **Report** one row per task: ID, title, PR link, and a state with its next command.
    `<task>` is `<repo>:<id>` with the row's `repo`, so the command picks the same
    repository even when another repository has a task with that ID:
@@ -30,9 +30,9 @@ Read-only. Do not edit, commit, push, comment, merge, lock or clean up anything.
    | State | Next |
    |---|---|
    | No PR yet | `/dev-autotask:run <task>` (it approves the plan and implements it) |
-   | PR open, no review of the current head | `$task-review <pr>` in Codex |
-   | Latest review has findings | `/dev-autotask:finish <task>` |
-   | `LGTM` whose `Reviewed head` equals the current head | `/dev-autotask:finish <task> merge` |
+   | PR open, no review, or an LGTM that is `edited` or not `current` | `$task-review <pr>` in Codex |
+   | Review `findings` | `/dev-autotask:finish <task>` |
+   | `approved: true` | `/dev-autotask:finish <task> merge` (mention `newerComments`) |
    | PR merged, task not done | `/dev-autotask:finish <task>` (records the merge and cleans up) |
    | PR closed unmerged | ask the user what they want to do with the task |
    | Done | nothing; mention a leftover worktree if `worktree` is set |

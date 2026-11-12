@@ -42,13 +42,16 @@ PR. Never push to the base branch, never force-push, never merge.
    <remote> --json visibility`; unless it is `PRIVATE` (or `INTERNAL`), stop and ask the
    user before pushing, because the fix and its regression tests disclose the
    vulnerability. Keep exploit detail out of the PR body and commit messages.
-   Run `node <plugin>/scripts/publish-check.mjs <worktree> <task.config> <task.repo>`
-   and push only when it reports `ok: true`. It refuses uncommitted work, a credential or
-   `.env` file in any commit, an unsigned commit where the repository requires signing,
-   and a known malware signature. Fix an ordinary failure with a new commit (rewrite
-   history only for a credential, which must also be revoked; tell the user) and run it
-   again. If `malware` is true, stop, push nothing, and tell the user to treat the
-   machine as suspect. Mention every file under `attention` in the PR body so the
+   Run `node <plugin>/scripts/publish-check.mjs <worktree> <task.config> <task.repo> <id>`
+   and push only when it reports `ok: true`. It refuses uncommitted work, a branch other
+   than this task's, a credential or `.env` file in any commit, an unsigned commit where
+   the repository requires signing, and a known malware signature. It scans every
+   commit, so a new commit fixes only `clean` and `shape` failures. For `env-file`,
+   `secret` or `signed`, stop and tell the user which commit fails and why; the repair is
+   a history rewrite, which you do only on the user's explicit authorization and only
+   for commits not yet pushed (never force-push). A credential must also be revoked,
+   pushed or not. If `malware` is true, stop, push nothing, and tell the user to treat
+   the machine as suspect. Mention every file under `attention` in the PR body so the
    reviewer looks at it.
    `git -C <worktree> push -u origin <branch>` (no force). If `task.pr` is
    null, check `gh pr list --repo <remote> --head <branch> --state all` so a retry

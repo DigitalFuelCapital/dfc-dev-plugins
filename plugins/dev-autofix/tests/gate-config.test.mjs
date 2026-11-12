@@ -41,6 +41,7 @@ test('protected files cover dependency manifests, lockfiles, CI, build files and
     'Makefile': 'build file', 'docker/Dockerfile.prod': 'build file', 'api.dockerfile': 'build file', 'docker-compose.override.yml': 'build file', 'compose.yaml': 'build file', 'justfile': 'build file',
     '.github/workflows/ci.yml': '.github', 'x/.husky/pre-commit': '.husky', '.circleci/config.yml': '.circleci', '.gitlab-ci.yml': '.gitlab-ci.yml', '.pre-commit-config.yaml': '.pre-commit-config.yaml',
     'package.json': 'package.json', '.gitignore': '.gitignore', 'apps/web/.env.local': '.env*', 'bin/run.sh': 'script', 'tsconfig.build.json': 'build/lint config',
+    '.gitmodules': '.gitmodules', 'webpack.config.js': 'build/lint config', 'apps/web/jest.config.ts': 'build/lint config', 'vitest.config.mts': 'build/lint config', '.babelrc': 'build/lint config', 'tailwind.config.cjs': 'build/lint config',
   };
   for (const [file, why] of Object.entries(refused)) assert.equal(forbiddenPath(file), why, file);
   for (const file of ['src/makefile_parser.py', 'docs/Dockerfile.md', 'src/requirements.py', 'app/compose.tsx', 'src/setup.ts', 'README.md', 'internal/go.mod.go']) assert.equal(forbiddenPath(file), null, file);

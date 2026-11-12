@@ -37,14 +37,18 @@ const ATTENTION = [
 ];
 
 const defaultGit = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd();
+// Patches this check scans: no colour, and every file as text so a `-diff` or `binary`
+// attribute, an external diff driver or a textconv filter cannot hide added content.
+const RAW_PATCH = ['--no-color', '--text', '--no-ext-diff', '--no-textconv'];
 const compile = table => Object.entries(table).map(([id, source]) => [id, new RegExp(source)]);
 
-export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, git = defaultGit) {
+export function publishCheck({ worktree, baseBranch, expectBranch, disabledPatterns = [] }, git = defaultGit) {
   const failures = [], attention = new Map();
   const fail = (check, detail) => failures.push({ check, detail });
   const base = `refs/remotes/origin/${baseBranch}`;
   const branch = git(worktree, ['branch', '--show-current']);
   if (!branch.startsWith('dev/autotask-')) fail('shape', `on '${branch || 'a detached HEAD'}', expected a dev/autotask-<id> branch`);
+  else if (expectBranch && branch !== expectBranch) fail('shape', `on '${branch}', expected this task's branch '${expectBranch}'`);
   const dirty = git(worktree, ['status', '--porcelain']);
   if (dirty) fail('clean', `uncommitted changes: ${dirty.split('\n').slice(0, 10).join('; ')}`);
   // Merges too: `finish` merges the base in to resolve conflicts, and a resolution can add anything.
@@ -64,10 +68,14 @@ export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, gi
     }
   };
   const scanPatch = (short, patch) => {
-    let file = null;
+    // `+++ ` names the file only between `diff --git` and the first `@@`; inside a hunk it is
+    // an added line whose content starts with `++ `, and is scanned like any other.
+    let file = null, inHunk = false;
     for (const line of patch.split('\n')) {
-      if (line.startsWith('+++ ')) { file = line.slice(4).replace(/^b\//, ''); continue; }
-      if (!line.startsWith('+')) continue;
+      if (line.startsWith('diff --git ')) { inHunk = false; continue; }
+      if (!inHunk && line.startsWith('+++ ')) { file = line.slice(4).replace(/^b\//, ''); continue; }
+      if (line.startsWith('@@')) { inHunk = true; continue; }
+      if (!inHunk || !line.startsWith('+')) continue;
       const added = line.slice(1);
       for (const [id, pattern] of malware) if (pattern.test(added)) fail('malware', `${short} ${file}: malware signature ${id}`);
       // Never echo the matched text: the output of this check ends up in transcripts and reports.
@@ -87,11 +95,11 @@ export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, gi
       // --remerge-diff shows what the merge itself changed beyond a clean automatic merge.
       // --no-renames: a rename (.env.example -> .env) is then an added .env, not an R entry.
       checkFiles(short, git(worktree, ['show', '--remerge-diff', '--no-renames', '--format=', '--name-only', '--diff-filter=AM', '-z', commit]), 'resolves a merge with');
-      scanPatch(short, git(worktree, ['show', '--remerge-diff', '--no-renames', '--format=', '-U0', commit]));
+      scanPatch(short, git(worktree, ['show', '--remerge-diff', '--no-renames', ...RAW_PATCH, '--format=', '-U0', commit]));
       continue;
     }
     checkFiles(short, git(worktree, ['diff-tree', '--no-renames', '--no-commit-id', '--root', '-r', '--name-only', '--diff-filter=AM', '-z', commit]), 'commits');
-    scanPatch(short, git(worktree, ['diff-tree', '--no-renames', '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
+    scanPatch(short, git(worktree, ['diff-tree', '--no-renames', ...RAW_PATCH, '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
   }
   if (mustSign && unsigned.length) fail('signed', `commit.gpgsign is on for this repository, but these commits have no valid signature: ${unsigned.join(' ')}`);
   return {
@@ -102,10 +110,10 @@ export function publishCheck({ worktree, baseBranch, disabledPatterns = [] }, gi
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    const [worktree, configFile, repo] = process.argv.slice(2);
-    if (!worktree || !configFile || !repo) throw new Error('Usage: publish-check.mjs <worktree> <config-file> <repo-name>');
+    const [worktree, configFile, repo, id] = process.argv.slice(2);
+    if (!worktree || !configFile || !repo || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id ?? '')) throw new Error('Usage: publish-check.mjs <worktree> <config-file> <repo-name> <task-id>');
     const config = loadConfig(configFile, { repo });
-    const result = publishCheck({ worktree: path.resolve(worktree), baseBranch: config.repo.baseBranch, disabledPatterns: config.disabledPatterns });
+    const result = publishCheck({ worktree: path.resolve(worktree), baseBranch: config.repo.baseBranch, expectBranch: `dev/autotask-${id}`, disabledPatterns: config.disabledPatterns });
     console.log(JSON.stringify(result, null, 2));
     if (!result.ok) process.exitCode = 1;
   } catch (error) { console.error(error.message); process.exitCode = 1; }

@@ -36,12 +36,12 @@ const PACKAGE_MANAGER_CONFIG = ['.npmrc', '.yarnrc', '.yarnrc.yml', '.pnpmfile.c
 const BUILD_FILE = /^(makefile|gnumakefile|justfile|taskfile\.ya?ml|dockerfile(\.(?!md$).+)?|.+\.dockerfile|(docker-)?compose(\..+)?\.ya?ml)$/i;
 const CI_CONFIG = /(^|\/)(\.github|\.husky|\.circleci)\/|(^|\/)(\.gitlab-ci\.yml|\.pre-commit-config\.yaml)$/;
 const SCRIPT = /\.(sh|bash|zsh|fish|command|bat|cmd|ps1|vbs)$/i;
-const TOOL_CONFIG = /^(postcss\.config\..+|eslint\.config\..+|next\.config\..+|vite\.config\..+|tsconfig.*\.json|wrangler\..+|\.graphqlrc(\..+)?)$/;
+const TOOL_CONFIG = /^((postcss|eslint|next|vite|webpack|rollup|babel|jest|vitest|playwright|karma|svelte|astro|nuxt|tailwind)\.config\..+|tsconfig.*\.json|wrangler\..+|\.graphqlrc(\..+)?|\.babelrc(\..+)?)$/;
 
 export function forbiddenPath(file, repo = {}, config = {}) {
   const base = path.posix.basename(file);
   const locks = [...LOCKFILES, path.posix.basename(repo.lockfile ?? 'package-lock.json')];
-  if (base === '.gitignore' || base === 'package.json' || locks.includes(base)) return base;
+  if (base === '.gitignore' || base === '.gitmodules' || base === 'package.json' || locks.includes(base)) return base;
   if (/^\.env/.test(base)) return '.env*';
   if (MANIFESTS.includes(base) || /^requirements.*\.txt$/.test(base)) return 'dependency manifest';
   if (PACKAGE_MANAGER_CONFIG.includes(base)) return 'package manager config';
@@ -59,7 +59,21 @@ export function sizeLimit(config, statedSize) {
   return Number.isSafeInteger(statedSize) ? Math.max(cap, Math.ceil(statedSize * 1.5)) : cap;
 }
 
-const addedLines = patch => patch.split('\n').filter(line => line.startsWith('+') && !line.startsWith('+++ '));
+// Added lines of a patch. `+++ ` is a file header only between `diff --git` and the first `@@`;
+// inside a hunk it is an added line whose content starts with `++ `, and must be scanned.
+export function addedLines(patch) {
+  const added = [];
+  let inHunk = false;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (inHunk && line.startsWith('+')) added.push(line);
+  }
+  return added;
+}
+// Patches the gate scans: no colour, and every file as text so a `-diff` or `binary`
+// attribute, an external diff driver or a textconv filter cannot hide added content.
+const RAW_PATCH = ['--no-color', '--text', '--no-ext-diff', '--no-textconv'];
 
 function scan(lines, patterns) {
   const hits = [];
@@ -158,7 +172,7 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
     const found = git(cwd, ['rev-list', '--merges', `${base}..HEAD`]).split('\n').filter(Boolean);
     if (found.length) fail('shape', `merge commits: ${found.join(' ')}`);
     limit = sizeLimit(config, statedSize);
-    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', `${base}...HEAD`]));
+    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', '--text', `${base}...HEAD`]));
   } else {
     requireValue(headRef, 'finish gate needs the PR head branch');
     const head = `refs/remotes/origin/${headRef}`;
@@ -171,15 +185,18 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
       // Git skips --remerge-diff for octopus merges, so their content could not be inspected.
       if (parents.length !== 2) { fail('shape', `merge ${merge} has ${parents.length} parents; only a two-parent merge of origin/${repo.baseBranch} can be checked`); continue; }
       if (!ancestor(parents[1], base)) fail('shape', `merge ${merge} pulls in ${parents[1]}, not on origin/${repo.baseBranch}`);
-      // --no-renames lists both sides of a rename, so neither path escapes forbiddenPath.
-      for (const file of git(cwd, ['show', '--remerge-diff', '--no-renames', '--format=', '--name-only', '-z', merge]).split('\0').filter(Boolean)) {
+      // --no-renames lists both sides of a rename, so neither path escapes forbiddenPath. --raw
+      // carries modes, so a resolution gets the same exec-bit and submodule checks as a commit.
+      for (const { newMode, file } of parseRawZ(git(cwd, ['show', '--remerge-diff', '--no-renames', '--format=', '--raw', '-z', merge]))) {
         const why = forbiddenPath(file, repo, config);
         if (why) fail('files', `${merge.slice(0, 8)} conflict resolution touches ${file} (${why})`);
+        if (newMode === '100755') fail('files', `${merge.slice(0, 8)} conflict resolution makes ${file} executable`);
+        if (newMode === '160000') fail('files', `${merge.slice(0, 8)} conflict resolution adds a submodule at ${file}`);
       }
-      scanPatch(merge.slice(0, 8), git(cwd, ['show', '--remerge-diff', '--no-renames', '--format=', merge]));
+      scanPatch(merge.slice(0, 8), git(cwd, ['show', '--remerge-diff', '--no-renames', ...RAW_PATCH, '--format=', merge]));
     }
     limit = Math.ceil((config.maxDiffLines ?? 150) * 1.5);
-    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', base, 'HEAD']));
+    size = diffSize(git(cwd, ['diff', '-U0', '--no-color', '--text', base, 'HEAD']));
   }
   for (const commit of commits) {
     try { git(cwd, ['verify-commit', commit]); } catch { fail('signed', `signature invalid ${commit}`); }
@@ -188,8 +205,9 @@ export function gate({ config, repo, token, mode, statedSize = null, headRef = n
       const why = forbiddenPath(file, repo, config);
       if (why) fail('files', `${commit.slice(0, 8)} touches ${file} (${why})`);
       if (newMode === '100755') fail('files', `${commit.slice(0, 8)} makes ${file} executable`);
+      if (newMode === '160000') fail('files', `${commit.slice(0, 8)} adds a submodule at ${file}`);
     }
-    scanPatch(commit.slice(0, 8), git(cwd, ['diff-tree', '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
+    scanPatch(commit.slice(0, 8), git(cwd, ['diff-tree', ...RAW_PATCH, '--no-commit-id', '--root', '-r', '-p', '-U0', commit]));
   }
   const verdict = sizeVerdict(size, limit, config, maxDiff);
   if (!verdict.ok) fail('size', `${verdict.raw} changed lines (${verdict.moved} moved, ${verdict.effective} effective) exceeds limit ${verdict.limit}; auto-pass needs effective <= ${verdict.limit} and raw <= ${verdict.ceiling}`);

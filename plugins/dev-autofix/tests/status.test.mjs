@@ -78,6 +78,10 @@ test('status reports budget, queue, last run, locks, worktrees and recovery with
   assert.ok(!JSON.stringify(full).includes('secret-token'), 'the lock token is never printed');
   assert.deepEqual(full.worktrees.map(item => item.exists), [true, false]);
   assert.deepEqual(fs.readdirSync(f.root, { recursive: true }).sort(), before);
+  // A lock that cannot be inspected is reported by name, never mistaken for no lock.
+  fs.writeFileSync(path.join(f.root, '.locks', 'stray'), 'not a lock directory\n');
+  const odd = status(f.file, { now: NOW * 1000, runtimeCheck: () => ({ platform: 'linux', git: '2.43' }) });
+  assert.deepEqual(odd.locks.find(item => item.name === 'stray'), { name: 'stray', error: 'Invalid lock directory' });
 });
 
 test('status CLI prints JSON and names a missing argument', t => {

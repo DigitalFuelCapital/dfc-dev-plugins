@@ -26,6 +26,17 @@ After any update, reinstall the plugin in Codex as well (see the
   reference). `list` shows done, worktree and lock.
 - `status` looks a task up by the row's repository and suggests `<repo>:<id>` commands,
   so a task ID used in two repositories cannot be confused.
+- **Review helper.** New `scripts/review.mjs` decides the latest review (configured
+  reviewers only, newest comment with a `Reviewed head:` line), its verdict and the head
+  it binds. An LGTM counts only in task-review's exact form and unedited. `finish` and
+  `status` use it; `finish` merges with `--match-head-commit` on the reviewed head, and
+  asks the user before merging past comments posted after the LGTM.
+- The publish check takes the task ID (`publish-check.mjs <worktree> <config> <repo>
+  <id>`) and refuses any branch but that task's. Its scan treats every file as text and
+  ignores diff drivers and colour config, so a `-diff` attribute cannot hide a secret,
+  and an added line that looks like a `+++` header is still scanned.
+- `run` says how to handle a check failure in an earlier commit: a new commit cannot fix
+  it; stop and explain, and rewrite unpushed history only with the user's authorization.
 - `plan` takes the task ID as `id=<slug>`, so an ID can no longer be confused with the
   first word of a request.
 - `verify.mjs` names Windows without WSL plainly, and exports its environment pass-list so

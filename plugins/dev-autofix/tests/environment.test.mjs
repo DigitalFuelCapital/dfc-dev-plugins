@@ -90,6 +90,6 @@ test('dependencies are reinstalled when the install marker is missing, whatever 
   assert.equal(await installIfStale(root, go, wt, exec(null)), null);
   assert.equal(calls.length, 6);
   const base = { version: 1, worktreeRoot: path.join(os.homedir(), '.claude', 'autofix', 'worktrees'), repos: [{ name: 'repo', path: os.tmpdir(), remote: 'owner/repo', baseBranch: 'main', verify: ['true'] }] };
-  for (const installMarker of ['/abs/.venv', '../outside', 3]) assert.throws(() => validateConfig({ ...base, repos: [{ ...base.repos[0], installMarker }] }), /installMarker/);
+  for (const installMarker of ['/abs/.venv', '../outside', 3, '.', './', 'a/..']) assert.throws(() => validateConfig({ ...base, repos: [{ ...base.repos[0], installMarker }] }), /installMarker/);
   assert.ok(validateConfig({ ...base, repos: [{ ...base.repos[0], installMarker: '' }] }));
 });

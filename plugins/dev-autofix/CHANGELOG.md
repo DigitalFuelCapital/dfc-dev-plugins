@@ -20,6 +20,21 @@ locale, temp and package-manager cache variables). If a command needs a variable
   `git merge-tree --write-tree`) or the platform is Windows without WSL.
 - The finish gate refuses a merge with more than two parents (git cannot show what its
   resolution changed), and checks both paths of a file renamed while resolving a merge.
+- The push gate scans every file as text, ignoring diff drivers, textconv and colour
+  config, so a `-diff` attribute cannot hide a malware line; an added line that looks like
+  a `+++` header is scanned too. It refuses `.gitmodules` and a submodule (gitlink), in a
+  commit or a merge's conflict resolution (which also gets the exec-bit check), and
+  protects more tool configs (`webpack`, `rollup`, `babel`, `jest`, `vitest`,
+  `playwright`, `karma`, `svelte`, `astro`, `nuxt`, `tailwind`, `.babelrc`).
+- Follow-up markers count only as a line of their own, outside a code fence, in a conversation comment, from a
+  reviewer or the account finish runs as (it need not be a reviewer). Feedback posted in
+  the same second as a marker stays pending unless the marker lists it.
+- `pr.mjs approval-input` without an out-file only classifies; `status` uses that, so it
+  writes nothing. `status` reports a lock it cannot inspect instead of hiding it.
+- Queue status and fallback titles are inserted literally (a `$&` no longer corrupts the
+  queue), and only the full `merged (PR #n, date)` form releases a dependant.
+- `remove-worktree` keeps the worktree when the open-PR list may be truncated.
+- `installMarker` cannot name the worktree itself (`.`), which would skip every install.
 - New `pr.mjs queue init` creates the queue skeleton and `pr.mjs queue lint` checks a queue
   against what the helpers parse. `init`, `plan` and `run` use them; `run` stops on lint
   errors instead of failing halfway.

@@ -39,10 +39,10 @@ It reads files only (no git, no `gh`) and returns:
 ## 2. Review state of the last run's PRs
 
 For each PR in `lastRun.prs` (in scope), classify its review timeline. This reads
-GitHub and changes nothing there:
+GitHub and writes nothing (no output file is given, so none is created):
 
 ```bash
-node <plugin>/scripts/pr.mjs approval-input <config-file> <repo> <number> <worktreeRoot>/review/scratch/<repo>-pr<number>.status.json
+node <plugin>/scripts/pr.mjs approval-input <config-file> <repo> <number>
 ```
 
 Use `classification`: `awaiting review`, `address` (feedback is pending), `approve`

@@ -10,6 +10,7 @@ import { buildApprovalInput } from './approval.mjs';
 
 // Deleting a worktree with node_modules took over 120s in the live run; 30 minutes still bounds a hang.
 export const WORKTREE_REMOVE_TIMEOUT_MS = 30 * 60 * 1000;
+export const OPEN_PR_LIMIT = 1000;
 
 export function cleanup({ configFile, config, repo, token, number, verificationId }, runtime = createRuntime()) {
   const { git } = runtime;
@@ -57,7 +58,10 @@ export function removeWorktree({ configFile, config, repo, token }, runtime = cr
   const text = fs.readFileSync(queueFile(configFile, config), 'utf8');
   const unpublished = parseQueue(text).filter(entry => entry.repo === repo.name && /^(pr-open|pushed)\b/.test(entry.status));
   if (unpublished.length) return keep(`queue has ${unpublished.map(entry => `${entry.slug} (${entry.status})`).join(', ')}`);
-  const open = JSON.parse(gh(['pr', 'list', '-R', repo.remote, '--state', 'open', '--json', 'number,headRefName', '--limit', '200'])).filter(item => item.headRefName.startsWith(`${prefix(repo)}-`));
+  const listed = JSON.parse(gh(['pr', 'list', '-R', repo.remote, '--state', 'open', '--json', 'number,headRefName', '--limit', String(OPEN_PR_LIMIT)]));
+  // A full page may hide more: keep the worktree rather than miss an open autofix PR.
+  if (listed.length >= OPEN_PR_LIMIT) return keep(`${OPEN_PR_LIMIT}+ open PRs; cannot confirm none is an autofix PR`);
+  const open = listed.filter(item => item.headRefName.startsWith(`${prefix(repo)}-`));
   if (open.length) return keep(`open autofix PRs: ${open.map(item => `#${item.number}`).join(', ')}`);
   const wt = checkWorktree(config, repo.name, token, git);
   if (!wt.exists) return keep('managed worktree does not exist');

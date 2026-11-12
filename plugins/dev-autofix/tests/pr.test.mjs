@@ -9,7 +9,7 @@ import { createRuntime as createMergeRuntime } from '../scripts/merge.mjs';
 import {
   createRuntime, parseQueue, nextEntry, setStatus, addInbox, addFallbackEntry, parseRawZ, renderBrief, sizeLimit, forbiddenPath,
   gate, publish, checkPRFile, buildApprovalInput, cleanup, removeWorktree, WORKTREE_REMOVE_TIMEOUT_MS,
-  diffSize, sizeVerdict, sizeNote, prepare, land,
+  diffSize, sizeVerdict, sizeNote, prepare, land, main, OPEN_PR_LIMIT,
 } from '../scripts/pr.mjs';
 
 const QUEUE = `# Autofix queue
@@ -129,6 +129,13 @@ test('queue picks the first ready, non-security entry whose prerequisite is merg
   assert.match(text, /^\| alpha \| merged \| none \|/m);
   assert.equal(nextEntry(text, 'repo').slug, 'beta');
   assert.throws(() => setStatus(QUEUE, 'missing', 'ready'), /not found/);
+  // Status and title text is inserted literally, never as replacement tokens.
+  const literal = setStatus(QUEUE, 'alpha', 'blocked (costs $& and $1)');
+  assert.match(literal, /- status: blocked \(costs \$& and \$1\)/);
+  assert.match(literal, /^\| alpha \| blocked \| none/m);
+  assert.match(addFallbackEntry(QUEUE, 'repo', 'cash', 'Price shows $& twice', '2026-09-27'), /^\| cash \| fallback \| none \| Price shows \$& twice \|$/m);
+  // Only the full merged form releases a dependant.
+  assert.equal(nextEntry(setStatus(setStatus(QUEUE, 'sec', 'blocked (x)'), 'alpha', 'merged?'), 'repo').slug, 'gamma');
   const inboxed = addInbox(addInbox(QUEUE, 'first candidate'), '- second candidate');
   assert.match(inboxed, /## Inbox\n\n- first candidate\n- second candidate\n\n## Entries/);
 });
@@ -190,6 +197,27 @@ test('run gate refuses payloads hidden by a later commit, forbidden paths, exec 
   for (const check of ['malware', 'files', 'signed', 'size', 'shape']) assert.ok(checks.has(check), check);
   assert.ok(result.failures.some(item => /executable/.test(item.detail)));
   assert.ok(result.failures.some(item => /package\.json/.test(item.detail)));
+});
+
+test('run gate scans content that attributes would hide or that looks like a patch header', t => {
+  const f = fixture(t);
+  f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
+  f.commit({ 'docs/.gitattributes': 'hidden.txt -diff\n', 'docs/hidden.txt': "fetch('https://api.trongrid.io/x')\n", 'notes.txt': 'one\n++ bsc-dataseed\n' });
+  const result = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'run' }, f.runtime);
+  assert.equal(result.malware, true);
+  const details = result.failures.map(item => item.detail).join('\n');
+  assert.match(details, /api\\\.trongrid/);
+  assert.match(details, /bsc-dataseed/);
+});
+
+test('run gate refuses a submodule', t => {
+  const f = fixture(t);
+  f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
+  fs.mkdirSync(path.join(f.wt, 'vendor', 'lib'), { recursive: true }); // an uninitialized submodule's empty directory
+  f.git(['update-index', '--add', '--cacheinfo', `160000,${f.base},vendor/lib`], f.wt);
+  f.git(['commit', '-S', '-q', '-m', 'Add submodule'], f.wt);
+  const result = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'run' }, f.runtime);
+  assert.match(result.failures.map(item => item.detail).join('\n'), /adds a submodule at vendor\/lib/);
 });
 
 test('run gate reports unfinished work as a clean failure without touching it', t => {
@@ -426,6 +454,9 @@ test('remove-worktree refuses while autofix work is unpublished or open, then re
   fs.writeFileSync(path.join(f.dir, 'AUTOFIX_QUEUE.md'), QUEUE);
   f.runtime.gh = () => JSON.stringify([{ number: 9, headRefName: 'fix/auto-20260927-gamma' }]);
   assert.match(removeWorktree(args, f.runtime).reason, /open autofix PRs: #9/);
+  // A full page of other PRs could hide an autofix PR past the limit: keep the tree.
+  f.runtime.gh = args => { assert.ok(args.includes(String(OPEN_PR_LIMIT))); return JSON.stringify(Array.from({ length: OPEN_PR_LIMIT }, (_, i) => ({ number: i + 1, headRefName: `feature/${i}` }))); };
+  assert.match(removeWorktree(args, f.runtime).reason, /cannot confirm none is an autofix PR/);
   f.runtime.gh = () => JSON.stringify([{ number: 10, headRefName: 'feature/other' }]);
   fs.writeFileSync(path.join(f.root, 'repo.lock.sha'), 'abc\n');
   assert.equal(removeWorktree(args, f.runtime).removed, true);
@@ -481,6 +512,26 @@ test('finish gate refuses an octopus merge, whose resolution git cannot show', t
   assert.match(result.failures.map(item => item.detail).join('\n'), /has 3 parents; only a two-parent merge of origin\/staging can be checked/);
 });
 
+test('finish gate refuses a submodule or exec bit added while resolving a base merge', t => {
+  const f = fixture(t);
+  f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
+  f.commit({ 'a.txt': 'two\n' });
+  f.git(['push', '-q', f.bare, 'fix/auto-20260927-alpha'], f.wt);
+  fs.writeFileSync(path.join(f.main, 'base.txt'), 'base moved\n');
+  f.git(['add', '.']); f.git(['commit', '-S', '-q', '-m', 'base moves']); f.git(['push', '-q', f.bare, 'staging']);
+  f.git(['fetch', '-q', f.bare, '+refs/heads/staging:refs/remotes/origin/staging'], f.wt);
+  f.git(['merge', '-q', '--no-commit', 'origin/staging'], f.wt);
+  fs.mkdirSync(path.join(f.wt, 'vendor', 'lib'), { recursive: true });
+  f.git(['update-index', '--add', '--cacheinfo', `160000,${f.base},vendor/lib`], f.wt);
+  fs.writeFileSync(path.join(f.wt, 'tool.txt'), 'x\n'); fs.chmodSync(path.join(f.wt, 'tool.txt'), 0o755);
+  f.git(['add', 'tool.txt'], f.wt);
+  f.git(['commit', '-S', '-q', '--no-edit'], f.wt);
+  const result = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
+  const details = result.failures.map(item => item.detail).join('\n');
+  assert.match(details, /conflict resolution adds a submodule at vendor\/lib/);
+  assert.match(details, /conflict resolution makes tool\.txt executable/);
+});
+
 test('finish gate accepts signed worker commits on a detached HEAD', t => {
   const f = fixture(t);
   f.git(['checkout', '-q', '-b', 'fix/auto-20260927-alpha'], f.wt);
@@ -492,6 +543,20 @@ test('finish gate accepts signed worker commits on a detached HEAD', t => {
   const result = gate({ config: f.config, repo: f.config.repos[0], token: f.token, mode: 'finish', headRef: 'fix/auto-20260927-alpha' }, f.runtime);
   assert.equal(result.ok, true, JSON.stringify(result.failures));
   assert.equal(result.commits.length, 1);
+});
+
+test('approval-input without an out-file classifies and writes nothing', async t => {
+  const f = fixture(t);
+  const head = f.git(['rev-parse', 'HEAD']);
+  f.runtime.readPR = () => ({ number: 7, state: 'OPEN', isDraft: true, isCrossRepository: false, headRefName: 'fix/auto-20260927-alpha', headRefOid: head, baseRefName: 'staging', url: 'https://github.com/owner/repo/pull/7' });
+  f.runtime.ghPages = api => api.endsWith('/issues/7/comments')
+    ? [{ id: 11, body: `LGTM\nReviewed head: ${head}`, user: { login: 'reviewer' }, html_url: 'https://github.com/owner/repo/pull/7#issuecomment-11', created_at: '2026-09-27T18:00:00Z', updated_at: '2026-09-27T18:00:00Z' }]
+    : [];
+  const before = fs.readdirSync(f.dir, { recursive: true }).sort();
+  const result = await main(['approval-input', f.configFile, 'repo', '7'], f.runtime);
+  assert.equal(result.classification, 'approve');
+  assert.equal(result.inputFile, null);
+  assert.deepEqual(fs.readdirSync(f.dir, { recursive: true }).sort(), before);
 });
 
 test('publish refuses a discovered PR that is no longer open', t => {

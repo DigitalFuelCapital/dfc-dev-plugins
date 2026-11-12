@@ -46,12 +46,13 @@ its own commit, and also saves the record above. A comment that names its head i
 only for that head, and only if it has never been edited (anyone with write access can
 edit a comment).
 
-`node <plugin>/scripts/pr.mjs approval-input <config> <repo> <n> <out>` builds the input
+`node <plugin>/scripts/pr.mjs approval-input <config> <repo> <n> [out]` builds the input
 the checker (`state.mjs approval`) and `merge.mjs` consume: `remote`, `number`, `headRef`,
 current `headSha`, `reviewers`, `approveTokens`, the deciding `pending` entry, and its
 evidence: a `record` (preferred), the comment's own `Reviewed head`, a formal review's
 `commitSha`, or `history`. Only non-dismissed `APPROVED`/`COMMENTED` formal reviews with an
 exact token qualify.
+Without `[out]` it only prints the classification and writes nothing; `status` uses that.
 
 When every pending entry is an approval, the newest decides and the older ones are
 returned as `superseded`. This is how an approval that could not be bound is cleared: the

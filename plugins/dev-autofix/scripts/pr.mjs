@@ -37,7 +37,7 @@ const USAGE = `Usage:
   pr.mjs publish <config> <repo> <repoToken> <runToken> <startedAt> <slug> [--max-diff <N>]
   pr.mjs prepare <config> <repo> <repoToken> [--head <branch> | --deps-only]
   pr.mjs land <config> <repo> <repoToken> <pr-number>
-  pr.mjs approval-input <config> <repo> <pr-number> <out-file>
+  pr.mjs approval-input <config> <repo> <pr-number> [out-file]
   pr.mjs cleanup <config> <repo> <repoToken> <pr-number> [verification-id]
   pr.mjs remove-worktree <config> <repo> <repoToken>`;
 
@@ -93,11 +93,12 @@ export async function main(argv, runtime = createRuntime()) {
       return publish({ configFile, config, repo, repoToken, runToken, startedAt, slug, maxDiff: flag ? Number(value) : null }, runtime);
     }
     case 'approval-input': {
+      // Without <out-file> it only classifies (status uses this) and writes nothing.
       const [number, out] = rest;
       const result = buildApprovalInput({ config, repo, number: Number(number), root }, runtime);
-      if (result.input) { fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true }); fs.writeFileSync(out, `${JSON.stringify(result.input, null, 2)}\n`); }
+      if (result.input && out) { fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true }); fs.writeFileSync(out, `${JSON.stringify(result.input, null, 2)}\n`); }
       const { input, ...summary } = result;
-      return { ...summary, inputFile: input ? path.resolve(out) : null };
+      return { ...summary, inputFile: input && out ? path.resolve(out) : null };
     }
     case 'cleanup': return cleanup({ configFile, config, repo, token: rest[0], number: Number(rest[1]), verificationId: rest[2] }, runtime);
     case 'prepare': {

@@ -299,13 +299,15 @@ origin are left where they are and reported.
 Workers never push. The lead pushes only after `scripts/pr.mjs gate` passes on the branch.
 It checks every outgoing commit, not just the net diff:
 
-- **Files.** No commit touches `.gitignore`, `.env*`, a dependency manifest or lockfile
+- **Files.** No commit touches `.gitignore`, `.gitmodules`, `.env*`, a dependency manifest or lockfile
   (`package.json`, `pyproject.toml`, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile`
   and their lockfiles), package manager config (`.npmrc`), CI or hook config (`.github/`,
   `.husky/`, `.circleci/`, `.gitlab-ci.yml`, `.pre-commit-config.yaml`), a shell or Windows
   script, a build file (`Makefile`, `Dockerfile`, compose files), a build or lint tool
-  config (`postcss`, `eslint`, `next`, `vite`, `tsconfig`, `wrangler`, `.graphqlrc`), or
-  anything matching your `protectedPaths`, and none makes a file executable. These are
+  config (`postcss`, `eslint`, `next`, `vite`, `webpack`, `rollup`, `babel`, `jest`,
+  `vitest`, `playwright`, `karma`, `svelte`, `astro`, `nuxt`, `tailwind`, `tsconfig`,
+  `wrangler`, `.graphqlrc`, `.babelrc`), or anything matching your `protectedPaths`; none
+  makes a file executable or adds a submodule. These are
   the files that decide what gets installed, built and run, and the ones supply-chain
   malware commonly targets.
 - **Size.** The diff is within `maxDiffLines` (or the entry's stated size plus 50%, if

@@ -129,6 +129,25 @@ test('publish check inspects what a merge resolution adds, like finish does on c
   assert.match(f.check().failures.find(item => item.check === 'signed').detail, new RegExp(merge));
 });
 
+test('publish check scans files that .gitattributes marks binary or gives a diff driver', t => {
+  const f = fixture(t);
+  const token = `ghp_${'A1b2'.repeat(9)}`;
+  f.commit({ '.gitattributes': 'hidden.txt -diff\nsmudged.txt diff=nothing\n', 'hidden.txt': `token=${token}\n`, 'smudged.txt': 'const k = process.env.AUTH_API_KEY;\n' });
+  f.git(f.task.worktree, ['config', 'diff.nothing.textconv', 'true']);
+  const details = f.check().failures.map(item => item.detail).join('\n');
+  assert.match(details, /hidden\.txt: looks like a github-token/);
+  assert.match(details, /smudged\.txt: malware signature auth-api-key/);
+});
+
+test('publish check scans an added line that looks like a file header', t => {
+  const f = fixture(t);
+  // The added line "++ x" appears in the patch as "+++ x", which must not be read as a header.
+  f.commit({ 'notes.txt': 'one\n++ fetch("https://api.trongrid.io/x")\n' });
+  const result = f.check();
+  assert.equal(result.malware, true);
+  assert.match(result.failures[0].detail, /notes\.txt: malware signature trongrid/);
+});
+
 test('publish check refuses a merge that pulls in anything but the base', t => {
   const f = fixture(t);
   f.commit({ 'a.txt': 'two\n' });
@@ -181,7 +200,7 @@ test('publish check refuses an octopus merge, whose resolution git cannot show',
 test('publish-check CLI reads the base branch and disabled ids from the config and exits non-zero on failure', t => {
   const f = fixture(t, { config: { disabledPatterns: ['auth-api-key'] } });
   f.commit({ 'src/x.js': 'const k = process.env.AUTH_API_KEY;\n' });
-  const run = () => spawnSync(process.execPath, [path.join(scripts, 'publish-check.mjs'), f.task.worktree, f.file, 'main'], { env, encoding: 'utf8' });
+  const run = (id = 'add-export') => spawnSync(process.execPath, [path.join(scripts, 'publish-check.mjs'), f.task.worktree, f.file, 'main', id], { env, encoding: 'utf8' });
   const ok = run();
   assert.equal(ok.status, 0, ok.stderr);
   assert.equal(JSON.parse(ok.stdout).ok, true);
@@ -189,6 +208,11 @@ test('publish-check CLI reads the base branch and disabled ids from the config a
   const bad = run();
   assert.equal(bad.status, 1);
   assert.deepEqual(checks(JSON.parse(bad.stdout)), ['clean']);
+  fs.unlinkSync(path.join(f.task.worktree, 'stray.txt'));
+  const other = run('other-task');
+  assert.equal(other.status, 1);
+  assert.match(JSON.parse(other.stdout).failures[0].detail, /expected this task's branch 'dev\/autotask-other-task'/);
+  assert.match(run('').stderr, /Usage: publish-check\.mjs/);
   assert.match(spawnSync(process.execPath, [path.join(scripts, 'publish-check.mjs')], { env, encoding: 'utf8' }).stderr, /Usage: publish-check\.mjs/);
 });
 

@@ -25,12 +25,15 @@ export function parseQueue(text) {
   });
 }
 
+// Only the full form counts as merged, so a hand-edited `merged?` cannot release a dependant.
+const MERGED = /^merged \(PR #\d+, .+\)$/;
+
 // A security entry is never auto-executed; compare loosely so `Security` cannot slip through.
 const isSecurity = entry => entry.kind.trim().toLowerCase() === 'security';
 
 export function nextEntry(text, repoName) {
   const entries = parseQueue(text);
-  const merged = new Set(entries.filter(entry => entry.status.startsWith('merged')).map(entry => entry.slug));
+  const merged = new Set(entries.filter(entry => MERGED.test(entry.status)).map(entry => entry.slug));
   return entries.find(entry => entry.repo === repoName && entry.status === 'ready' && !isSecurity(entry) && (entry.after === 'none' || merged.has(entry.after))) ?? null;
 }
 
@@ -42,7 +45,7 @@ export function queueSkeleton(config) {
 }
 
 export const QUEUE_KINDS = ['mechanical', 'bugfix', 'refactor', 'security'];
-const STATUS_FORMS = [/^ready$/, /^needs-human \(.+\)$/, /^blocked \(.+\)$/, /^pushed \(.+\)$/, /^pr-open \(PR #\d+, .+\)$/, /^merged \(PR #\d+, .+\)$/, /^fallback \(.+\)$/];
+const STATUS_FORMS = [/^ready$/, /^needs-human \(.+\)$/, /^blocked \(.+\)$/, /^pushed \(.+\)$/, /^pr-open \(PR #\d+, .+\)$/, MERGED, /^fallback \(.+\)$/];
 
 /**
  * Check a queue file against what the helpers parse. `errors` are things that make a helper
@@ -87,7 +90,8 @@ export function setStatus(text, slug, status) {
   const entry = new RegExp(`(^### ${escape(slug)} ·[^\\n]*\\n- status: )[^\\n]*`, 'm');
   requireValue(entry.test(text), `Queue entry ${slug} not found`);
   const short = status.replace(/\s*\(.*$/, '');
-  return text.replace(entry, `$1${status}`).replace(new RegExp(`^(\\| ${escape(slug)} \\| )[^|]*`, 'm'), `$1${short} `);
+  // Callbacks insert the text literally: a `$&` or `$1` in a status is not a replacement token.
+  return text.replace(entry, (_, head) => `${head}${status}`).replace(new RegExp(`^(\\| ${escape(slug)} \\| )[^|]*`, 'm'), (_, head) => `${head}${short} `);
 }
 
 export function addInbox(text, line) {
@@ -111,7 +115,7 @@ export function addFallbackEntry(text, repoName, slug, title, date) {
   const at = header.index + header[0].length;
   let out = `${text.slice(0, at)}\n\n${entry}${text.slice(at).replace(/^\n+/, '\n')}`;
   const table = new RegExp(`(^## Summary - ${escape(repoName)}[ \\t]*\\n\\n\\| slug \\|[^\\n]*\\n\\|[-| ]+\\|\\n)`, 'm');
-  out = out.replace(table, `$1| ${slug} | fallback | none | ${title.trim()} |\n`);
+  out = out.replace(table, head => `${head}| ${slug} | fallback | none | ${title.trim()} |\n`);
   return out;
 }
 

@@ -100,8 +100,17 @@ Claude Code:
 
 ```
 /plugin marketplace update dfc-dev-plugins
-/reload-plugins
 ```
+
+That refreshes the catalog only. Then update each installed plugin, either in `/plugin`
+(Installed tab, select the plugin, **Update now**) or from a terminal:
+
+```bash
+claude plugin update dev-autofix@dfc-dev-plugins
+claude plugin update dev-autotask@dfc-dev-plugins
+```
+
+and run `/reload-plugins` (or restart Claude Code).
 
 After updating `dev-autofix`, run `/dev-autofix:init` once more. It refreshes the copied
 budget snapshot writer, which a plugin update does not touch.
