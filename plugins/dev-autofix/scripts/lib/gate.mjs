@@ -20,9 +20,8 @@ export const RISKY_CONSTRUCTS = {
 export const MALWARE_PATTERNS = Object.values(MALWARE_SIGNATURES);
 
 export function gatePatterns(config = {}) {
+  // An unknown id (a typo) is ignored: that pattern simply stays on, as in dev-autotask.
   const disabled = config.disabledPatterns ?? [];
-  const known = { ...MALWARE_SIGNATURES, ...RISKY_CONSTRUCTS };
-  for (const id of disabled) requireValue(id in known, `disabledPatterns: unknown pattern id ${id}; known ids: ${Object.keys(known).join(', ')}`);
   const enabled = table => Object.entries(table).filter(([id]) => !disabled.includes(id)).map(([, source]) => new RegExp(source));
   return { malware: [...enabled(MALWARE_SIGNATURES), ...(config.blockPatterns ?? []).map(source => new RegExp(source))], risky: enabled(RISKY_CONSTRUCTS) };
 }
@@ -36,7 +35,7 @@ const PACKAGE_MANAGER_CONFIG = ['.npmrc', '.yarnrc', '.yarnrc.yml', '.pnpmfile.c
 const BUILD_FILE = /^(makefile|gnumakefile|justfile|taskfile\.ya?ml|dockerfile(\.(?!md$).+)?|.+\.dockerfile|(docker-)?compose(\..+)?\.ya?ml)$/i;
 const CI_CONFIG = /(^|\/)(\.github|\.husky|\.circleci)\/|(^|\/)(\.gitlab-ci\.yml|\.pre-commit-config\.yaml)$/;
 const SCRIPT = /\.(sh|bash|zsh|fish|command|bat|cmd|ps1|vbs)$/i;
-const TOOL_CONFIG = /^((postcss|eslint|next|vite|webpack|rollup|babel|jest|vitest|playwright|karma|svelte|astro|nuxt|tailwind)\.config\..+|tsconfig.*\.json|wrangler\..+|\.graphqlrc(\..+)?|\.babelrc(\..+)?)$/;
+const TOOL_CONFIG = /^((postcss|eslint|next|vite|webpack|rollup|babel|jest|vitest|playwright|karma|svelte|astro|nuxt|tailwind)\.config\..+|tsconfig.*\.json|wrangler\..+|\.graphqlrc(\..+)?|\.babelrc(\..+)?|\.eslintrc(\..+)?)$/;
 
 export function forbiddenPath(file, repo = {}, config = {}) {
   const base = path.posix.basename(file);
@@ -99,10 +98,14 @@ export function parseRawZ(output) {
 // one hunk), with at least minRun non-blank lines. Matching across hunk boundaries is not a move.
 export function diffSize(patch, minRun = 3) {
   const addedBlocks = [], deletedBlocks = [];
-  let current = null, sign = null, raw = 0;
+  let current = null, sign = null, raw = 0, inHunk = false;
   const flush = () => { if (current?.length) (sign === '+' ? addedBlocks : deletedBlocks).push(current); current = null; sign = null; };
   for (const line of patch.split('\n')) {
-    const isChange = (line.startsWith('+') && !line.startsWith('+++ ')) || (line.startsWith('-') && !line.startsWith('--- '));
+    // `---`/`+++` are file headers only before a file's first `@@`; in a hunk they are content
+    // (a deleted `-- comment` line), so they count like any other change.
+    if (line.startsWith('diff --git ')) inHunk = false;
+    else if (line.startsWith('@@')) inHunk = true;
+    const isChange = inHunk && (line.startsWith('+') || line.startsWith('-'));
     if (!isChange) { flush(); continue; } // headers, @@, context and '\ No newline' all end a block
     raw++;
     if (line[0] !== sign) { flush(); sign = line[0]; current = []; }

@@ -1,5 +1,5 @@
 // The latest review of a dev-autotask PR, read from `gh pr view --json headRefOid,comments`.
-// finish merges only on this helper's `mergeable: true`, so which comment counts as the review,
+// finish merges only on this helper's `approved: true`, so which comment counts as the review,
 // who may write it and which head it binds are decided here, not by reading comments by hand.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,8 +12,8 @@ const HEAD_LINE = /^Reviewed head: ([0-9a-f]{40})$/i;
 /**
  * The newest comment by a reviewer with a `Reviewed head: <sha>` line is the review. It is
  * an LGTM only in task-review's exact form (`LGTM`, `Reviewed head:`, optional `Checks:`)
- * and only if never edited: anyone with write access can edit a comment. Comments posted
- * after it, by anyone, are feedback that finish must read before merging.
+ * and only if never edited: anyone with write access can edit a comment. `newerComments`
+ * counts what was said after it (bots included) for finish to read; it does not block.
  */
 export function latestReview({ comments, headRefOid, reviewers }) {
   need(Array.isArray(comments), 'Expected the PR comments');
@@ -22,7 +22,7 @@ export function latestReview({ comments, headRefOid, reviewers }) {
   const lines = body => String(body ?? '').trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const sorted = [...comments].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   const index = sorted.findLastIndex(c => allowed.has(c.author?.login?.toLowerCase()) && lines(c.body).some(line => HEAD_LINE.test(line)));
-  if (index < 0) return { review: null, current: false, newerComments: sorted.length, approved: false, mergeable: false };
+  if (index < 0) return { review: null, current: false, newerComments: sorted.length, approved: false };
   const comment = sorted[index], body = lines(comment.body);
   const reviewedHead = HEAD_LINE.exec(body.find(line => HEAD_LINE.test(line)))[1].toLowerCase();
   const checks = body.find(line => /^Checks: /i.test(line))?.slice(8).trim() ?? null;
@@ -32,8 +32,8 @@ export function latestReview({ comments, headRefOid, reviewers }) {
   const newerComments = sorted.length - index - 1;
   return {
     review: { author: comment.author.login, url: comment.url ?? null, createdAt: comment.createdAt, verdict, reviewedHead, checks },
-    // approved: the current head has an exact LGTM. mergeable: and nothing was said since.
-    current, newerComments, approved: verdict === 'lgtm' && current, mergeable: verdict === 'lgtm' && current && newerComments === 0,
+    // approved: the current head has an exact, unedited LGTM. That alone allows a merge.
+    current, newerComments, approved: verdict === 'lgtm' && current,
   };
 }
 

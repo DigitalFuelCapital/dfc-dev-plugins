@@ -237,7 +237,7 @@ Top-level settings:
 | `sources` | `[]` | Audit documents the planner mines for candidates. Treated as dated leads and re-verified. |
 | `forbidden` | `[]` | Hard rules appended to every worker and investigator brief. |
 | `blockPatterns` | `[]` | Extra regular expressions that must not appear on any added line. A match stops the run. |
-| `disabledPatterns` | `[]` | Ids of built-in push-gate patterns to switch off, for a repo that legitimately contains one (for example `create-require`). The ids are listed in the schema. |
+| `disabledPatterns` | `[]` | Ids of built-in push-gate patterns to switch off, for a repo that legitimately contains one (for example `create-require`). The ids are listed in the schema; an unknown id is ignored, so that pattern stays on. |
 | `protectedPaths` | `[]` | Extra regular expressions for files no fix may touch, matched against the repo-relative path (for example `^db/migrations/`). |
 | `deployPatterns` | `["supabase functions deploy [\\w-]+"]` | Deploy steps to watch for. When a queue entry names a matching command, the PR body must repeat it. |
 | `reviewers` | your `gh` login | Whose PR comments `finish` acts on. Comments from anyone else are ignored. |
@@ -306,7 +306,7 @@ It checks every outgoing commit, not just the net diff:
   script, a build file (`Makefile`, `Dockerfile`, compose files), a build or lint tool
   config (`postcss`, `eslint`, `next`, `vite`, `webpack`, `rollup`, `babel`, `jest`,
   `vitest`, `playwright`, `karma`, `svelte`, `astro`, `nuxt`, `tailwind`, `tsconfig`,
-  `wrangler`, `.graphqlrc`, `.babelrc`), or anything matching your `protectedPaths`; none
+  `wrangler`, `.graphqlrc`, `.babelrc`, `.eslintrc`), or anything matching your `protectedPaths`; none
   makes a file executable or adds a submodule. These are
   the files that decide what gets installed, built and run, and the ones supply-chain
   malware commonly targets.

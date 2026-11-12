@@ -83,7 +83,9 @@ jobs:
       - name: Tag and release new plugin versions
         env:
           GH_TOKEN: ${{ github.token }}
+        # pipefail: a failing `pending` must fail the job, not release nothing and pass.
         run: |
+          set -o pipefail
           node tools/release.mjs pending | while read -r plugin version tag; do
             node tools/release.mjs notes "$plugin" > notes.md
             gh release create "$tag" --target "$GITHUB_SHA" --title "$plugin $version" --notes-file notes.md

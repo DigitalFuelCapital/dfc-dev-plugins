@@ -29,8 +29,9 @@ After any update, reinstall the plugin in Codex as well (see the
 - **Review helper.** New `scripts/review.mjs` decides the latest review (configured
   reviewers only, newest comment with a `Reviewed head:` line), its verdict and the head
   it binds. An LGTM counts only in task-review's exact form and unedited. `finish` and
-  `status` use it; `finish` merges with `--match-head-commit` on the reviewed head, and
-  asks the user before merging past comments posted after the LGTM.
+  `status` use it; `finish` merges with `--match-head-commit` on the reviewed head.
+  Comments posted after the LGTM are read and reported, and block only if one asks for a
+  change.
 - The publish check takes the task ID (`publish-check.mjs <worktree> <config> <repo>
   <id>`) and refuses any branch but that task's. Its scan treats every file as text and
   ignores diff drivers and colour config, so a `-diff` attribute cannot hide a secret,

@@ -44,8 +44,9 @@ test('a plugin whose behaviour files changed must carry a higher version', t => 
   f.write('plugins/alpha/README.md', '# alpha, reworded\n');
   f.write('plugins/alpha/tests/tool.test.mjs', '// new test\n');
   f.write('plugins/alpha/examples/sample.json', '{}\n');
+  f.write('plugins/alpha/docs/troubleshooting.md', '# Fixes\n');
   f.commit('docs and tests');
-  assert.equal(f.check().ok, true, 'README, tests and examples never need a bump');
+  assert.equal(f.check().ok, true, 'README, docs, tests and examples never need a bump');
 
   f.write('plugins/alpha/skills/run/SKILL.md', 'Do the thing, carefully.\n');
   f.commit('reword a skill');
@@ -102,4 +103,5 @@ test('releases are created only after lint and tests pass for the same push', ()
   assert.match(job, /^ {4}needs: \[lint, test\]$/m);
   assert.match(job, /^ {4}if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'$/m);
   assert.ok(job.includes('gh release create'), 'the needs line belongs to the job that releases');
+  assert.match(job, /^ {10}set -o pipefail$/m, 'a failing `pending` must fail the job');
 });

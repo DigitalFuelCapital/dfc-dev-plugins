@@ -32,7 +32,7 @@ Read-only. Do not edit, commit, push, comment, merge, lock or clean up anything.
    | No PR yet | `/dev-autotask:run <task>` (it approves the plan and implements it) |
    | PR open, no review, or an LGTM that is `edited` or not `current` | `$task-review <pr>` in Codex |
    | Review `findings` | `/dev-autotask:finish <task>` |
-   | `approved: true` | `/dev-autotask:finish <task> merge` (mention `newerComments`) |
+   | `approved: true` | `/dev-autotask:finish <task> merge` |
    | PR merged, task not done | `/dev-autotask:finish <task>` (records the merge and cleans up) |
    | PR closed unmerged | ask the user what they want to do with the task |
    | Done | nothing; mention a leftover worktree if `worktree` is set |

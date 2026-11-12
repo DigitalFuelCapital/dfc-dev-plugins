@@ -5,8 +5,10 @@ import { checkApproval, parseApproval } from '../state.mjs';
 import { createRuntime, prefix, read, shaOK } from './common.mjs';
 
 // The follow-up marker finish posts: a line of its own in a conversation comment. PRs handled
-// before 4.0 say `review`. A quoted (`> `) or inline copy is not a marker.
-const MARKER = /^<!-- dev-autofix:(?:finish|review) addressed=([^\s>]*) -->$/m;
+// before 4.0 say `review`. A quoted (`> `) or inline copy is not a marker. Spacing is loose:
+// `addressed=31, 32` and trailing whitespace are fine; up to three leading spaces, as four
+// (or a tab) make a Markdown code block.
+const MARKER = /^ {0,3}<!-- dev-autofix:(?:finish|review) addressed=([^>]*?)[ \t]*-->[ \t]*$/;
 // CommonMark fences: at most three leading spaces; a backtick fence's info string has no
 // backtick; a closing fence repeats the opening character at least as many times and is
 // followed only by spaces or tabs, so `~~~html` or an indented fence does not close one.
@@ -24,7 +26,7 @@ const markerIds = item => {
     const open = OPEN_FENCE.exec(line)?.[1];
     if (open) { fence = open; continue; }
     const match = MARKER.exec(line);
-    if (match) return new Set(match[1].split(',').map(id => id.trim()).filter(Boolean));
+    if (match) return new Set(match[1].split(/[\s,]+/).filter(Boolean));
   }
   return null;
 };

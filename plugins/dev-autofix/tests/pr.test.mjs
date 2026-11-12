@@ -613,6 +613,12 @@ test('diffSize gives no discount for matching lines scattered across hunks', () 
   assert.deepEqual(diffSize(block), { raw: 6, moved: 3, effective: 3 });
 });
 
+test('diffSize counts deleted or added lines that look like ---/+++ headers', () => {
+  // Deleting SQL `-- comment` lines shows as `--- comment` inside the hunk.
+  const patch = ['diff --git a/q.sql b/q.sql', '--- a/q.sql', '+++ b/q.sql', '@@ -1,3 +1,1 @@', '--- one', '--- two', '+++ three'].join('\n');
+  assert.equal(diffSize(patch).raw, 3);
+});
+
 test('size verdict auto-passes move-heavy diffs within the ceiling and honours an explicit override', () => {
   const config = { maxDiffLines: 150 };
   assert.deepEqual(sizeVerdict({ raw: 160, moved: 28, effective: 132 }, 150, config), { raw: 160, moved: 28, effective: 132, limit: 150, ceiling: 225, override: null, autoPassed: true, ok: true });

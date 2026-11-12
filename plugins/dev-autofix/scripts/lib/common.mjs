@@ -16,12 +16,13 @@ export const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function createRuntime(env = process.env) {
   const execute = (file, args, options = {}) => execFileSync(file, args, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'], timeout: 120000, ...options }).trimEnd();
   const gh = (args, options = {}) => execute('gh', args, options);
+  let me = null; // the gh login cannot change within one run, so ask once
   return {
     git: (cwd, args, options = {}) => execute('git', ['-C', cwd, ...args], options),
     gh,
     ghPages: api => JSON.parse(gh(['api', '--paginate', '--slurp', api]) || '[]').flat(),
     readPR: (remote, number) => JSON.parse(gh(['pr', 'view', String(number), '-R', remote, '--json', 'number,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,url,mergeCommit'])),
-    login: () => gh(['api', 'user', '--jq', '.login']),
+    login: () => (me ??= gh(['api', 'user', '--jq', '.login'])),
     today: () => new Date().toLocaleDateString('en-CA'),
     sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
     // Long commands (install, prepare, verification) use merge.mjs's process-group runner and logs.

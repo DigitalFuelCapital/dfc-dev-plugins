@@ -25,8 +25,12 @@ locale, temp and package-manager cache variables). If a command needs a variable
   a `+++` header is scanned too. It refuses `.gitmodules` and a submodule (gitlink), in a
   commit or a merge's conflict resolution (which also gets the exec-bit check), and
   protects more tool configs (`webpack`, `rollup`, `babel`, `jest`, `vitest`,
-  `playwright`, `karma`, `svelte`, `astro`, `nuxt`, `tailwind`, `.babelrc`).
-- Follow-up markers count only as a line of their own, outside a code fence, in a conversation comment, from a
+  `playwright`, `karma`, `svelte`, `astro`, `nuxt`, `tailwind`, `.babelrc`, `.eslintrc`).
+  The size count includes changed lines that look like `---`/`+++` headers (a deleted
+  `-- comment` line). An unknown `disabledPatterns` id is ignored instead of failing every
+  publish.
+- Follow-up markers count only as a line of their own (ids may be separated by commas or
+  spaces), outside a code fence, in a conversation comment, from a
   reviewer or the account finish runs as (it need not be a reviewer). Feedback posted in
   the same second as a marker stays pending unless the marker lists it.
 - `pr.mjs approval-input` without an out-file only classifies; `status` uses that, so it

@@ -119,12 +119,20 @@ test('feedback in the same second as a marker stays pending unless the marker na
   assert.equal(build(t, { issues }).classification, 'awaiting review');
 });
 
+test('a marker may list ids with spaces and carry surrounding whitespace', t => {
+  for (const marker of ['<!-- dev-autofix:finish addressed=31, 32 -->', '   <!-- dev-autofix:finish addressed=31,32 -->  ', '<!-- dev-autofix:finish addressed=31 32-->']) {
+    const issues = [comment(31, 'rename x', '2026-09-27T18:00:00Z'), comment(32, 'and y', '2026-09-27T18:05:00Z'), comment(33, `Done.\n${marker}`, '2026-09-27T18:10:00Z')];
+    assert.equal(build(t, { issues }).classification, 'awaiting review', marker);
+  }
+});
+
 test('a quoted, inline or mid-line marker does not end a review round', t => {
   const fenced = fence => `The marker looks like this:\n${fence}\n<!-- dev-autofix:finish addressed=31 -->\n${fence}\nPlease fix x first.`;
   // A line that is not a valid closing fence keeps the block open, so the marker after it is still an example.
   const notClosed = (open, fake) => `Example:\n${open}\n${fake}\n<!-- dev-autofix:finish addressed=31 -->\n${open}`;
   const examples = ['> <!-- dev-autofix:finish addressed=31 -->', 'see <!-- dev-autofix:finish addressed=31 --> above', fenced('```'), fenced('~~~'), fenced('````'),
     notClosed('~~~', '~~~html'), notClosed('```', '```js'), notClosed('~~~', '    ~~~'), notClosed('```', '    ```'), notClosed('````', '```'), notClosed('```', '~~~')];
+  examples.push('Example:\n\n    <!-- dev-autofix:finish addressed=31 -->', 'Example:\n\n\t<!-- dev-autofix:finish addressed=31 -->');
   for (const body of examples) {
     const issues = [comment(31, 'rename x', '2026-09-27T18:00:00Z'), comment(32, body, '2026-09-27T18:10:00Z')];
     assert.deepEqual(build(t, { issues }).pending.map(item => item.id), [31, 32], body);

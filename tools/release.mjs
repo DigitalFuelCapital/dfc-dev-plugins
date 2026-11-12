@@ -15,7 +15,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultGit = root => (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd();
 
 // Changes to these never alter what an installed plugin does.
-const NO_BUMP = [/^tests\//, /^examples\//, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
+const NO_BUMP = [/^tests\//, /^examples\//, /^docs\//, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
 
 export const pluginNames = root => fs.readdirSync(path.join(root, 'plugins')).filter(name => fs.existsSync(path.join(root, 'plugins', name, '.claude-plugin', 'plugin.json'))).sort();
 export const pluginVersion = (root, name) => JSON.parse(fs.readFileSync(path.join(root, 'plugins', name, '.claude-plugin', 'plugin.json'), 'utf8')).version;

@@ -1,13 +1,13 @@
 // Read-only summary of an autofix workspace: budget, queue, last run, locks, worktrees and
-// recovery folders. Takes no locks, calls neither git nor gh, and writes nothing.
+// recovery folders. Takes no locks, never calls gh and writes nothing; it runs only
+// `git --version` (the runtime check) and `du` (recovery folder sizes).
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { checkRuntime, inspectLock, listRecovery, validateConfig } from './state.mjs';
 import { lintQueue, nextEntry, parseQueue, queueFile } from './lib/queue.mjs';
+import { expand } from './lib/common.mjs';
 
-const expand = value => value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 const readJSON = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
 // The same conditions /dev-autofix:run stops on, so status can say whether a run would start.
