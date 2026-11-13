@@ -28,14 +28,12 @@ resolved config path. Run the config check from
 [config check and locks](../../references/locks.md) before
 planning; every repo needs nonempty verification commands.
 
-Read the budget snapshot with the same rules as `/dev-autofix:run` step 2: judge
-freshness by `observed5` and `observed7` independently, never `ts`. A fresh reading for
-one window does not refresh the other; missing per-window timestamps require a new API
-observation, not just a status-line refresh. Stop if weekly used `>= 100 -
-reservePercent` or the 5h window is at or above `fiveHourCeiling`. If the budget is
-unavailable (no snapshot, or null percentages), say so and continue only with the user's
-go-ahead; planning is bounded by `areas` and `per-area`, not by budget. Print the
-numbers so the user can see the burn.
+Read the budget with the same helper as `/dev-autofix:run` step 2:
+`node <plugin>/scripts/pr.mjs budget <config-file>`. Stop on `reserve-reached`,
+`five-hour-ceiling` or `writer-outdated`, giving `reason` (for `writer-outdated`, the user
+runs `/dev-autofix:init`, then `plan` again). On `stale` or `unavailable`, say so and
+continue only with the user's go-ahead; planning is bounded by `areas` and `per-area`, not
+by budget. Print both percentages so the user can see the burn.
 
 ## 2. Refresh the base
 

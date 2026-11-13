@@ -12,7 +12,7 @@
       "name": "dev-autofix",
       "source": "./plugins/dev-autofix",
       "description": "Plan and run small fixes as signed draft PRs, review the full batch in Claude Code or Codex, then address findings and merge on approval",
-      "version": "4.0.0",
+      "version": "4.1.0",
       "author": {
         "name": "Digital Fuel Capital"
       }

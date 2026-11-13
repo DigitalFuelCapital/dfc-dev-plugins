@@ -27,9 +27,9 @@ node <plugin>/scripts/status.mjs <config-file>
 It reads files only (no git, no `gh`) and returns:
 
 - `runtime` - the platform and Git version check
-- `budget` - `state` is `ok`, `stale`, `reserve-reached`, `five-hour-ceiling` or
-  `unavailable`, with the reason and each window's numbers. It applies the conditions
-  `/dev-autofix:run` stops on, but run re-reads the snapshot itself.
+- `budget` - `state` is `ok`, `stale`, `reserve-reached`, `five-hour-ceiling`,
+  `unavailable` or `writer-outdated` (run `/dev-autofix:init`), with the reason and each
+  window's numbers. It is the same gate `/dev-autofix:run` uses, read at this moment.
 - `queue` - counts per repo by status, `next` (the entry run would take now),
   `needsHuman` (each open decision) and lint results
 - `lastRun` - the run manifest: when it started and the PRs it registered

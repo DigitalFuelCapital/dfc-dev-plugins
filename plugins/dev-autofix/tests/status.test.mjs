@@ -9,6 +9,7 @@ import { budgetState, queueSummary, status } from '../scripts/status.mjs';
 import { queueSkeleton } from '../scripts/pr.mjs';
 
 const NOW = 1_800_000_000;
+const WRITER_OK = { ok: true, path: 'usage-snapshot.mjs' }; // the real ~/.claude copy is not under test here
 const snapshot = (extra = {}) => ({ pct5: 20, observed5: NOW - 60, reset5: NOW + 3600, pct7: 50, observed7: NOW - 120, reset7: NOW + 86400, ...extra });
 
 test('budget state mirrors the conditions run stops on', () => {
@@ -16,7 +17,7 @@ test('budget state mirrors the conditions run stops on', () => {
   const ok = budgetState(snapshot(), {}, NOW);
   assert.equal(ok.state, 'ok');
   assert.equal(ok.headroomPercent, 40, 'min(90 - 50, 90 - 20)');
-  assert.deepEqual(ok.weekly, { usedPercent: 50, observedSecondsAgo: 120, resetsInSeconds: 86400, fresh: true });
+  assert.deepEqual(ok.weekly, { usedPercent: 50, observedSecondsAgo: 120, resetsInSeconds: 86400, fresh: true, skipped: false, atReserve: false });
   assert.equal(budgetState(snapshot(), { reservePercent: 60 }, NOW).state, 'reserve-reached');
   assert.equal(budgetState(snapshot({ pct7: 90 }), {}, NOW).state, 'reserve-reached');
   assert.equal(budgetState(snapshot({ pct5: 90 }), {}, NOW).state, 'five-hour-ceiling');
@@ -52,7 +53,7 @@ test('queue summary counts entries per repo and names what run would take next',
 
 test('status reports budget, queue, last run, locks, worktrees and recovery without changing anything', t => {
   const f = fixture(t);
-  const empty = status(f.file, { now: NOW * 1000, runtimeCheck: () => ({ platform: 'linux', git: '2.43' }) });
+  const empty = status(f.file, { now: NOW * 1000, writer: WRITER_OK, runtimeCheck: () => ({ platform: 'linux', git: '2.43' }) });
   assert.deepEqual(empty.runtime, { ok: true, platform: 'linux', git: '2.43' });
   assert.equal(empty.budget.state, 'unavailable');
   assert.deepEqual(empty.queue, { file: path.join(f.dir, 'AUTOFIX_QUEUE.md'), missing: true });
@@ -68,7 +69,7 @@ test('status reports budget, queue, last run, locks, worktrees and recovery with
   fs.mkdirSync(path.join(f.root, '.locks', 'run.abandoned-1'));
   fs.writeFileSync(path.join(f.root, 'last-run.json'), JSON.stringify({ startedAt: '2026-11-10T10:00:00Z', prs: [{ repo: 'app', number: 7, branch: 'fix/auto-20261110-a', url: 'https://github.com/o/app/pull/7' }] }));
   const before = fs.readdirSync(f.root, { recursive: true }).sort();
-  const full = status(f.file, { now: NOW * 1000, runtimeCheck: () => { throw new Error('Git 2.34 is too old'); } });
+  const full = status(f.file, { now: NOW * 1000, writer: WRITER_OK, runtimeCheck: () => { throw new Error('Git 2.34 is too old'); } });
   assert.deepEqual(full.runtime, { ok: false, error: 'Git 2.34 is too old' });
   assert.equal(full.budget.state, 'ok');
   assert.equal(full.queue.entries, 0);
@@ -80,7 +81,7 @@ test('status reports budget, queue, last run, locks, worktrees and recovery with
   assert.deepEqual(fs.readdirSync(f.root, { recursive: true }).sort(), before);
   // A lock that cannot be inspected is reported by name, never mistaken for no lock.
   fs.writeFileSync(path.join(f.root, '.locks', 'stray'), 'not a lock directory\n');
-  const odd = status(f.file, { now: NOW * 1000, runtimeCheck: () => ({ platform: 'linux', git: '2.43' }) });
+  const odd = status(f.file, { now: NOW * 1000, writer: WRITER_OK, runtimeCheck: () => ({ platform: 'linux', git: '2.43' }) });
   assert.deepEqual(odd.locks.find(item => item.name === 'stray'), { name: 'stray', error: 'Invalid lock directory' });
 });
 
