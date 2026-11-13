@@ -24,6 +24,8 @@ After any update, reinstall the plugin in Codex as well (see the
   hold the task lock, and refuses a worktree of another repository or one whose HEAD the
   task branch does not contain (a detached commit would otherwise lose its only
   reference). `list` shows done, worktree and lock.
+  With `--merged <sha>` (finish passes the merged head) it also deletes the remote task
+  branch, only while the branch still points at that commit.
 - `status` looks a task up by the row's repository and suggests `<repo>:<id>` commands,
   so a task ID used in two repositories cannot be confused.
 - **Review helper.** New `scripts/review.mjs` decides the latest review (configured

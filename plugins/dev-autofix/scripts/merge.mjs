@@ -78,7 +78,12 @@ export function createRuntime(env = process.env) {
       const killGroup = sig => {
         if (!Number.isSafeInteger(child.pid)) return false;
         try { process.kill(-child.pid, sig); return true; }
-        catch (error) { if (error.code !== 'ESRCH') cleanupError = error; }
+        catch (error) {
+          // Codex's sandbox refuses group signals with EPERM. Cleanup is best effort then: the
+          // command's own exit code (or timeout) still decides the result.
+          if (error.code === 'EPERM') fs.writeSync(fd, `\n[dev-autofix] Could not signal the process group (EPERM); leftover background processes may still be running.\n`);
+          else if (error.code !== 'ESRCH') cleanupError = error;
+        }
         return false;
       };
       const finish = error => {

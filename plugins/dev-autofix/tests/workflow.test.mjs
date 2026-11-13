@@ -257,6 +257,17 @@ test('command timeout kills the process group, including children that ignore SI
   assert.ok(pids.every(pid => !running(pid)), 'No running command or descendant may remain');
 });
 
+test('a sandbox that refuses group signals (EPERM) does not fail a command that exited', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autofix-eperm-'));
+  const kill = process.kill;
+  process.kill = (pid, sig) => { if (pid < 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' }); return kill.call(process, pid, sig); };
+  t.after(() => { process.kill = kill; fs.rmSync(directory, { recursive: true, force: true }); });
+  const log = path.join(directory, 'command.log');
+  const result = await createRuntime().run('exit 0', directory, log, 5000);
+  assert.deepEqual([result.exitCode, result.timedOut], [0, false]);
+  assert.match(fs.readFileSync(log, 'utf8'), /EPERM/);
+});
+
 for (const exitCode of [0, 7]) test(`command exit ${exitCode} cleans up resistant background processes without changing its result`, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'autofix-background-'));
   const ready = path.join(directory, 'ready');

@@ -197,6 +197,7 @@ const gitExec = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encod
 // Records, plan.md and the branch are kept.
 export function cleanupTask(id, session, options = {}, git = gitExec) {
   need(text(session), 'A session ID is required; take the task lock first');
+  need(options.merged === undefined || /^[0-9a-f]{40}$/i.test(options.merged), '--merged takes the full 40-character head SHA that was merged');
   const record = locate(id, options);
   const lock = lockFile(record);
   need(fs.existsSync(lock), `Task ${id} is not locked; take the lock (state.mjs lock ${id} <session>) before cleanup`);
@@ -217,9 +218,21 @@ export function cleanupTask(id, session, options = {}, git = gitExec) {
     git(config.repo.path, ['worktree', 'remove', task.worktree]);
     worktree = 'removed';
   }
+  // With --merged <sha>, delete the remote branch, but only while it still points at that
+  // merged head: the lease leaves anything pushed since untouched.
+  let remote = 'kept';
+  if (options.merged) {
+    const tip = git(config.repo.path, ['ls-remote', 'origin', `refs/heads/${task.branch}`]).split('\t')[0];
+    if (!tip) remote = 'already deleted';
+    else if (tip.toLowerCase() !== options.merged.toLowerCase()) remote = `kept: remote tip ${tip.slice(0, 12)} is not the merged head`;
+    else {
+      try { git(config.repo.path, ['push', `--force-with-lease=refs/heads/${task.branch}:${tip}`, 'origin', `:refs/heads/${task.branch}`]); remote = 'deleted'; }
+      catch (error) { remote = `kept: ${error.stderr?.trim() || error.message}`; }
+    }
+  }
   task.done ??= new Date().toISOString();
   write(record, task);
-  return { id, worktree, done: task.done, branch: task.branch };
+  return { id, worktree, done: task.done, branch: task.branch, remote };
 }
 
 function update(id, options, change) {
@@ -242,13 +255,14 @@ export const addProgress = (id, note, options = {}) => update(id, options, task 
   task.progress.push({ at: new Date().toISOString(), note });
 });
 
-const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note> | lock <id> <session> [--force] | unlock <id> <session> | cleanup <id> <session>';
+const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note> | lock <id> <session> [--force] | unlock <id> <session> | cleanup <id> <session> [--merged <sha>]';
 function main(argv) {
   const options = {}, args = [];
-  let force = false;
+  let force = false, merged;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--repo' || argv[i] === '--remote') options[argv[i].slice(2)] = argv[++i];
     else if (argv[i] === '--force') force = true;
+    else if (argv[i] === '--merged') merged = argv[++i] ?? '';
     else args.push(argv[i]);
   }
   need(!('repo' in options && 'remote' in options) && Object.values(options).every(text), USAGE);
@@ -265,7 +279,7 @@ function main(argv) {
     case 'progress': return addProgress(id, rest.join(' '), scope);
     case 'lock': return lockTask(id, rest[0], { ...scope, force });
     case 'unlock': return unlockTask(id, rest[0], scope);
-    case 'cleanup': return cleanupTask(id, rest[0], scope);
+    case 'cleanup': return cleanupTask(id, rest[0], { ...scope, merged });
     default: throw new Error(USAGE);
   }
 }

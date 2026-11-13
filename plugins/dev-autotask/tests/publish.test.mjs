@@ -250,7 +250,26 @@ test('cleanup removes a clean task worktree, marks the task done, and refuses to
   const listed = listTasks(f.options)[0];
   assert.equal(listed.done, cleaned.done);
   assert.equal(listed.worktree, null);
-  assert.deepEqual(cleanupTask('add-export', 'session-a', f.options, f.git), { id: 'add-export', worktree: 'absent', done: cleaned.done, branch: 'dev/autotask-add-export' });
+  assert.deepEqual(cleanupTask('add-export', 'session-a', f.options, f.git), { id: 'add-export', worktree: 'absent', done: cleaned.done, branch: 'dev/autotask-add-export', remote: 'kept' });
+});
+
+test('cleanup --merged deletes the remote task branch only while it is at the merged head', t => {
+  const f = fixture(t);
+  const merged = f.commit({ 'a.txt': 'two\n' });
+  f.git(f.task.worktree, ['push', '-q', 'origin', f.task.branch]);
+  lockTask('add-export', 'session-a', f.options);
+  const remoteTip = () => f.git(f.main, ['ls-remote', 'origin', `refs/heads/${f.task.branch}`]);
+  assert.throws(() => cleanupTask('add-export', 'session-a', { ...f.options, merged: 'abc' }, f.git), /40-character/);
+  // Someone pushed after the merge: the newer commit stays.
+  const newer = f.commit({ 'a.txt': 'three\n' });
+  f.git(f.task.worktree, ['push', '-q', 'origin', f.task.branch]);
+  assert.match(cleanupTask('add-export', 'session-a', { ...f.options, merged }, f.git).remote, /kept: remote tip/);
+  assert.match(remoteTip(), new RegExp(newer));
+  f.git(f.main, ['push', '-q', '-f', 'origin', `${merged}:refs/heads/${f.task.branch}`]);
+  assert.equal(cleanupTask('add-export', 'session-a', { ...f.options, merged }, f.git).remote, 'deleted');
+  assert.equal(remoteTip(), '');
+  assert.equal(cleanupTask('add-export', 'session-a', { ...f.options, merged }, f.git).remote, 'already deleted');
+  assert.equal(cleanupTask('add-export', 'session-a', f.options, f.git).remote, 'kept', 'without --merged nothing remote changes');
 });
 
 test('cleanup needs the task lock, and leaves another session\'s task untouched', t => {

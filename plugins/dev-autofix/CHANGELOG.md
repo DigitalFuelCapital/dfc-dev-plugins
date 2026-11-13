@@ -38,6 +38,8 @@ locale, temp and package-manager cache variables). If a command needs a variable
 - Queue status and fallback titles are inserted literally (a `$&` no longer corrupts the
   queue), and only the full `merged (PR #n, date)` form releases a dependant.
 - `remove-worktree` keeps the worktree when the open-PR list may be truncated.
+- A verify command that exited is no longer failed because the sandbox refused to signal
+  its leftover background processes (`kill EPERM` in Codex). The log notes it instead.
 - `installMarker` cannot name the worktree itself (`.`), which would skip every install.
 - New `pr.mjs queue init` creates the queue skeleton and `pr.mjs queue lint` checks a queue
   against what the helpers parse. `init`, `plan` and `run` use them; `run` stops on lint

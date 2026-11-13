@@ -60,8 +60,9 @@ never use `--admin` or auto-merge, never merge without an explicit request.
      120s), merge `origin/<baseBranch>` into the branch, verify, run the publish check
      and push; that new head needs `$task-review` again. Confirm `state` is `MERGED` before saying so.
 6. **Report** the PR, head and outcome. After a confirmed merge, run
-   `<state> --remote <task.remote> cleanup <id> <session>`: it needs your lock, removes
-   the task worktree (never forced; uncommitted work, or a HEAD that the task branch does
-   not contain, stops it) and marks the task done. If it refuses, report why and leave the
+   `<state> --remote <task.remote> cleanup <id> <session> --merged <sha>`,
+   with the merged PR's `headRefOid`: it needs your lock, removes the task worktree (never forced; uncommitted work, or a HEAD
+   that the task branch does not contain, stops it), deletes the remote branch if it is
+   still at the merged head, and marks the task done. If it refuses, report why and leave the
    worktree for the user. The records, `plan.md` and the local branch are kept. Release
    the task lock.
