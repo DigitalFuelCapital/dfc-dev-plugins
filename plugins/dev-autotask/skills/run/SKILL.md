@@ -18,11 +18,16 @@ PR. Never push to the base branch, never force-push, never merge.
    the task's recorded `config`. Read the plan. If the plan has open questions, ask them
    first. If `task.pr` is set and every milestone is done, report the PR and stop;
    review findings are handled by `finish`.
+   Then take the task lock: pick one session ID for this invocation (a UUID) and run
+   `<state> --remote <task.remote> lock <id> <session>`. If another session holds it,
+   stop and tell the user who holds it and since when; use `--force` only after the user
+   confirms that session has ended. Release it in step 6, also when you stop on a failure:
+   `<state> --remote <task.remote> unlock <id> <session>`.
 2. **Worktree.** If `task.worktree` exists, resume there: keep uncommitted work and
    read `task.progress`. Otherwise run `git -C <task.path> fetch origin` (allow at
    least 120s), then `git -C <task.path> worktree add -b <branch> <worktree>
-   origin/<baseBranch>`, or `git worktree add <worktree> <branch>` if the branch
-   already exists. Never switch or edit the main checkout.
+   origin/<baseBranch>`, or `git -C <task.path> worktree add <worktree> <branch>` if
+   the branch already exists. Never switch or edit the main checkout.
 3. **Implement** the milestones in order inside the worktree. Follow the repository's
    instructions, `task.forbidden`, and its commit-signing rules. Add tests for the
    acceptance criteria. Commit each milestone with explicit paths, then record it:
@@ -37,6 +42,17 @@ PR. Never push to the base branch, never force-push, never merge.
    <remote> --json visibility`; unless it is `PRIVATE` (or `INTERNAL`), stop and ask the
    user before pushing, because the fix and its regression tests disclose the
    vulnerability. Keep exploit detail out of the PR body and commit messages.
+   Run `node <plugin>/scripts/publish-check.mjs <worktree> <task.config> <task.repo> <id>`
+   and push only when it reports `ok: true`. It refuses uncommitted work, a branch other
+   than this task's, a credential or `.env` file in any commit, an unsigned commit where
+   the repository requires signing, and a known malware signature. It scans every
+   commit, so a new commit fixes only `clean` and `shape` failures. For `env-file`,
+   `secret` or `signed`, stop and tell the user which commit fails and why; the repair is
+   a history rewrite, which you do only on the user's explicit authorization and only
+   for commits not yet pushed (never force-push). A credential must also be revoked,
+   pushed or not. If `malware` is true, stop, push nothing, and tell the user to treat
+   the machine as suspect. Mention every file under `attention` in the PR body so the
+   reviewer looks at it.
    `git -C <worktree> push -u origin <branch>` (no force). If `task.pr` is
    null, check `gh pr list --repo <remote> --head <branch> --state all` so a retry
    never opens a second PR; if none exists, write the body to a file and run
@@ -44,6 +60,7 @@ PR. Never push to the base branch, never force-push, never merge.
    <title> --body-file <file>`. The body summarizes the change and verification, then
    includes `plan.md` inside `<details><summary>Plan</summary>...</details>` so the
    reviewer has it. Record the number: `<state> --remote <task.remote> pr <id> <number>`.
-6. **Stop.** Report the PR URL, milestones done and verification result. Tell the user
+6. **Stop.** Release the task lock. Report the PR URL, milestones done and verification
+   result. Tell the user
    to review it in Codex with `$task-review <number>` (or `/dev-autotask:task-review <number>`),
    then run `/dev-autotask:finish <id>`. Do not review it yourself.

@@ -22,8 +22,10 @@ Arguments: repo names to limit scope (default: all), `areas=N` investigators to 
 ## 1. Load config and budget
 
 Resolve `autofix.config.json` exactly as `/dev-autofix:init` does. Stop and say so if it is
-missing - tell the user to run `/dev-autofix:init`. Run the config check from
-[shared workflow state](../../references/workflow-state.md#config-and-ownership) before
+missing - tell the user to run `/dev-autofix:init`. `<plugin>` below is this plugin's
+root, two directories above this skill's base directory, and `<config-file>` is the
+resolved config path. Run the config check from
+[config check and locks](../../references/locks.md) before
 planning; every repo needs nonempty verification commands.
 
 Read the budget snapshot with the same rules as `/dev-autofix:run` step 2: judge
@@ -93,8 +95,10 @@ An entry is `ready` only if a worker can execute it with no judgement calls. Mar
 - adds, removes or bumps a dependency (also set `deps-change: yes`)
 - creates or runs a database migration, or changes a schema
 - deletes something whose only evidence of being dead is "no references found"
-- needs to edit a path the push gate refuses (`.gitignore`, `.env*`, lockfiles,
-  `package.json`, `.github/`, build/lint tool config) - see `/dev-autofix:run` step 5
+- needs to edit a path the push gate refuses (`.gitignore`, `.env*`, dependency manifests
+  and lockfiles, package manager config, CI and hook config, scripts, build files,
+  build/lint tool config, anything matching `protectedPaths`), or needs `eval(`,
+  `new Function(` or `createRequire` - see `/dev-autofix:run` step 5
 
 The phrasing matters: `needs-human (delete the legacy table, or keep it for audit
 history?)` is actionable. `needs-human (risky)` is not. Write the decision the human has
@@ -105,14 +109,37 @@ to make, not the fact that one exists.
 Read the area files, then write the queue yourself - do not let investigators write it
 concurrently.
 
+Use this layout. The helpers in `scripts/pr.mjs` depend on these exact headings:
+`queue inbox` needs `## Inbox`, and `queue add-fallback` needs `## Entries` and adds a row
+under `## Summary - <repo.name>`. A complete file is in the
+[example queue](../../examples/AUTOFIX_QUEUE.md).
+
+```
+# Autofix queue
+## Summary - <repo.name>    one per repo: a table of slug | status | after | title
+## Inbox                    one-liners waiting for a planning run
+## Entries                  every `### ` entry (step 7), grouped by repo, best-first
+## Dropped                  one line per rejected candidate and why
+```
+
+If the queue file does not exist yet, create it with
+`node <plugin>/scripts/pr.mjs queue init <config-file>`. If an existing queue is missing
+one of these headings, add it; never rewrite or reorder entries that are already there to
+do so.
+
+When the queue is written, run `node <plugin>/scripts/pr.mjs queue lint <config-file>`.
+Fix every `error`, and every `warning` on an entry you wrote, before reporting. Report
+warnings on entries you did not write instead of editing them.
+
 - Dedupe by slug, by file overlap, and against open PRs.
 - Order best-first per repo: mechanical and low-risk before refactors.
 - Chain dependent entries with `after:`; a worker only takes an entry whose `after:` is
   `none` or already `merged` into the base branch; an open PR does not unlock anything.
-- Keep a `## Dropped` section with one line per rejected candidate and why. This is what
+- Add one line to `## Dropped` per rejected candidate, with the reason. This is what
   stops the next planning run from re-proposing the same bad idea.
 - Clear the `## Inbox` one-liners that got planned; leave the rest.
-- Keep a summary table per repo at the top: slug, status, after, title.
+- Keep each `## Summary - <repo.name>` table in step with its entries. The table's status
+  column holds the status word only (`needs-human`, not the decision text).
 
 ## 7. Entry format
 
@@ -131,6 +158,9 @@ Fix workers parse this. Keep the keys and their order exactly.
 - pr: <title> | <one-line body summary>
 - watch-outs: gotchas a worker would otherwise get wrong
 ```
+
+When `fallbackSearch` is on, `/dev-autofix:run` can add entries of its own with
+`status: fallback (unplanned, <date>)`. Leave those as they are.
 
 `watch-outs` is the highest-value line in the entry. Use it for the traps that have
 actually bitten this codebase: units that are not what they look like (cents vs dollars),

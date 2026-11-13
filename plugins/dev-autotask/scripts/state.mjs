@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 // KEY-DECISION 2026-11-06: reuse dev-autofix's config (one file per workspace, a `repos`
@@ -79,13 +80,16 @@ export function loadConfig(file = findConfig(), options = {}) {
   const config = JSON.parse(fs.readFileSync(file, 'utf8'));
   need(config?.version === 1 && Array.isArray(config.repos) && config.repos.length, `${file}: expected version 1 and a repos list`);
   need(list(config.forbidden, s => typeof s === 'string'), `${file}: forbidden must be a list`);
+  need(list(config.reviewers), `${file}: reviewers must be a list of GitHub logins`);
+  need(list(config.disabledPatterns), `${file}: disabledPatterns must be a list of pattern ids`);
   const repos = config.repos.map(repo => checkRepo(repo, file));
   need(new Set(repos.map(r => r.name)).size === repos.length, `${file}: repo names must be unique`);
   const root = expand(options.root ?? ROOT);
   need(path.isAbsolute(root), 'The dev-autotask root must be absolute');
   for (const r of repos) need(!inside(real(r.path), real(root)), `${root} must be outside every repo checkout (it is inside ${r.name})`);
   const repo = selectRepo(repos, file, options);
-  return { file: path.resolve(file), root, forbidden: config.forbidden ?? [], repos: repos.map(r => r.name), repo };
+  // reviewers: whose review comments finish acts on; null means the authenticated gh user.
+  return { file: path.resolve(file), root, forbidden: config.forbidden ?? [], reviewers: config.reviewers ?? null, disabledPatterns: config.disabledPatterns ?? [], repos: repos.map(r => r.name), repo };
 }
 
 // Tasks are namespaced by GitHub repository, like their branches.
@@ -138,7 +142,7 @@ function scan(root) {
 export function listTasks({ root = ROOT, remote } = {}) {
   return scan(root)
     .filter(({ task }) => !legacy(task) && (!remote || task.remote.toLowerCase() === remote.toLowerCase()))
-    .map(({ id, record, task }) => ({ id, repo: task.repo, remote: task.remote, title: task.title, pr: task.pr, record }));
+    .map(({ id, record, task }) => ({ id, repo: task.repo, remote: task.remote, title: task.title, pr: task.pr, done: task.done ?? null, worktree: fs.existsSync(task.worktree) ? task.worktree : null, locked: fs.existsSync(lockFile(record)), record }));
 }
 
 function locate(id, options) {
@@ -156,7 +160,79 @@ export function showTask(id, options = {}) {
   const task = read(locate(id, options));
   const config = loadConfig(task.config, { root: options.root, repo: task.repo });
   need(config.repo.remote.toLowerCase() === task.remote.toLowerCase(), `${task.config}: repo ${task.repo} is now ${config.repo.remote}, not ${task.remote}`);
-  return { ...task, plan: taskPaths(config.root, task.remote, id).plan, path: config.repo.path, forbidden: [...config.forbidden, ...config.repo.forbidden] };
+  return { ...task, plan: taskPaths(config.root, task.remote, id).plan, path: config.repo.path, forbidden: [...config.forbidden, ...config.repo.forbidden], reviewers: config.reviewers };
+}
+
+// KEY-DECISION 2026-11-11: one session works on a task at a time. The lock is a plain file
+// naming the session; nothing expires it, and only an explicit --force (after the user
+// confirms the other session has ended) replaces it. The old owner is kept beside it.
+const lockFile = record => path.join(path.dirname(record), 'lock.json');
+export function lockTask(id, session, options = {}) {
+  need(text(session), 'A session ID is required');
+  const file = lockFile(locate(id, options));
+  const mine = { session, host: os.hostname(), at: new Date().toISOString() };
+  const claim = () => fs.writeFileSync(file, `${JSON.stringify(mine, null, 2)}\n`, { flag: 'wx' });
+  try { claim(); return { locked: true, ...mine }; }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  const owner = read(file);
+  if (owner.session === session && owner.host === mine.host) return { locked: true, resumed: true, ...owner };
+  need(options.force === true, `Task ${id} is locked by session ${owner.session} on ${owner.host} since ${owner.at}. If that session has ended, confirm with the user, then repeat with --force`);
+  fs.renameSync(file, `${file}.replaced-${Date.now()}`);
+  claim();
+  return { locked: true, replaced: owner, ...mine };
+}
+export function unlockTask(id, session, options = {}) {
+  const file = lockFile(locate(id, options));
+  if (!fs.existsSync(file)) return { locked: false };
+  need(read(file).session === session, `Task ${id} is locked by another session; not releasing it`);
+  fs.unlinkSync(file);
+  return { locked: false };
+}
+
+const gitExec = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30 * 60 * 1000 }).trimEnd();
+// After a merge (or when a task is abandoned): remove the task worktree and mark the task done.
+// Only the session holding the task lock may do it, so another session's worktree is never
+// pulled out from under it. Never forced: uncommitted work stops it, and so does a HEAD the
+// task branch does not contain (a detached commit would otherwise lose its only reference).
+// Records, plan.md and the branch are kept.
+export function cleanupTask(id, session, options = {}, git = gitExec) {
+  need(text(session), 'A session ID is required; take the task lock first');
+  need(options.merged === undefined || /^[0-9a-f]{40}$/i.test(options.merged), '--merged takes the full 40-character head SHA that was merged');
+  const record = locate(id, options);
+  const lock = lockFile(record);
+  need(fs.existsSync(lock), `Task ${id} is not locked; take the lock (state.mjs lock ${id} <session>) before cleanup`);
+  need(read(lock).session === session, `Task ${id} is locked by another session; not cleaning it up`);
+  const task = read(record);
+  const config = loadConfig(task.config, { root: options.root, repo: task.repo });
+  let worktree = 'absent';
+  if (fs.existsSync(task.worktree)) {
+    const common = cwd => real(git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    need(common(task.worktree) === common(config.repo.path), `${task.worktree} is not a worktree of ${config.repo.path}; not removing it`);
+    need(git(task.worktree, ['status', '--porcelain']) === '', `${task.worktree} has uncommitted changes; commit or discard them before cleanup`);
+    if (git(task.worktree, ['branch', '--show-current']) !== task.branch) {
+      const head = git(task.worktree, ['rev-parse', 'HEAD']);
+      let kept = true;
+      try { git(task.worktree, ['merge-base', '--is-ancestor', head, `refs/heads/${task.branch}`]); } catch { kept = false; }
+      need(kept, `${task.worktree} is at ${head.slice(0, 12)}, which ${task.branch} does not contain; keep it with \`git -C ${task.worktree} branch <name> ${head.slice(0, 12)}\` or move it onto ${task.branch}, then clean up`);
+    }
+    git(config.repo.path, ['worktree', 'remove', task.worktree]);
+    worktree = 'removed';
+  }
+  // With --merged <sha>, delete the remote branch, but only while it still points at that
+  // merged head: the lease leaves anything pushed since untouched.
+  let remote = 'kept';
+  if (options.merged) {
+    const tip = git(config.repo.path, ['ls-remote', 'origin', `refs/heads/${task.branch}`]).split('\t')[0];
+    if (!tip) remote = 'already deleted';
+    else if (tip.toLowerCase() !== options.merged.toLowerCase()) remote = `kept: remote tip ${tip.slice(0, 12)} is not the merged head`;
+    else {
+      try { git(config.repo.path, ['push', `--force-with-lease=refs/heads/${task.branch}:${tip}`, 'origin', `:refs/heads/${task.branch}`]); remote = 'deleted'; }
+      catch (error) { remote = `kept: ${error.stderr?.trim() || error.message}`; }
+    }
+  }
+  task.done ??= new Date().toISOString();
+  write(record, task);
+  return { id, worktree, done: task.done, branch: task.branch, remote };
 }
 
 function update(id, options, change) {
@@ -179,11 +255,14 @@ export const addProgress = (id, note, options = {}) => update(id, options, task 
   task.progress.push({ at: new Date().toISOString(), note });
 });
 
-const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note>';
+const USAGE = 'Usage: state.mjs [--repo <name> | --remote <owner/repo>] config | list | show <id> | create <id> <title> | pr <id> <number> | progress <id> <note> | lock <id> <session> [--force] | unlock <id> <session> | cleanup <id> <session> [--merged <sha>]';
 function main(argv) {
   const options = {}, args = [];
+  let force = false, merged;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--repo' || argv[i] === '--remote') options[argv[i].slice(2)] = argv[++i];
+    else if (argv[i] === '--force') force = true;
+    else if (argv[i] === '--merged') merged = argv[++i] ?? '';
     else args.push(argv[i]);
   }
   need(!('repo' in options && 'remote' in options) && Object.values(options).every(text), USAGE);
@@ -198,6 +277,9 @@ function main(argv) {
     case 'show': return showTask(id, scope);
     case 'pr': return setPR(id, rest[0], scope);
     case 'progress': return addProgress(id, rest.join(' '), scope);
+    case 'lock': return lockTask(id, rest[0], { ...scope, force });
+    case 'unlock': return unlockTask(id, rest[0], scope);
+    case 'cleanup': return cleanupTask(id, rest[0], { ...scope, merged });
     default: throw new Error(USAGE);
   }
 }

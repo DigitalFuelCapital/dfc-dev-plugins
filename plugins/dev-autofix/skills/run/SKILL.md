@@ -24,6 +24,9 @@ never force-pushes, and never touches the user's own checkouts.
 after the push gate (step 5) passes. A worker is a model that can be wrong or misled; the
 gate is a check that cannot.
 
+**Names used below.** `<plugin>` is this plugin's root, two directories above this
+skill's base directory. `<config-file>` is the resolved path of `autofix.config.json`.
+
 ## 1. Load config
 
 Resolve `autofix.config.json` from the current directory or any ancestor, else
@@ -31,12 +34,16 @@ Resolve `autofix.config.json` from the current directory or any ancestor, else
 missing. Apply argument overrides on top. Resolve `queuePath` relative to the directory
 holding the config; expand `~` in `worktreeRoot` and `usageSnapshotPath`.
 
-Read [shared workflow state](../../references/workflow-state.md) and run its config
-check. Require nonempty verification commands; acquire the run lock before recovery or
-publication and each repo lock before worktree use. Release owned locks in a finally
-step after workers stop. A busy repo is skipped, never reset.
+Read [config check and locks](../../references/locks.md),
+[worktrees](../../references/worktrees.md) and [publishing](../../references/publishing.md)
+(the [index](../../references/workflow-state.md) lists every helper and file), and run
+the config check. Require nonempty verification commands; acquire the run lock before recovery or
+publication and each repo lock before worktree use. Acquiring them returns the `runToken`
+and `repoToken` that the helpers below take; also persist one ISO `startedAt` for this
+invocation. Release owned locks in a finally step after workers stop. A busy repo is
+skipped, never reset.
 
-Unless `dry-run`, run [delivery preflight](../../references/workflow-state.md#delivery-preflight)
+Unless `dry-run`, run [delivery preflight](../../references/publishing.md#delivery-preflight)
 for the selected repos before installing dependencies or launching workers:
 `node <plugin>/scripts/preflight.mjs <config-file> <repo-name ...>`. On `ok: false`, report
 the failed checks and stop before spending worker budget. Relay any `warnings`.
@@ -122,7 +129,7 @@ Run it before the first entry and again between entries to switch the clean tree
 the base. On failure, read `stage`:
 
 - **`prune-needed`** - the tree is missing but still registered. Follow the shared
-  [preparation and recovery procedure](../../references/workflow-state.md#worktree-preparation-and-recovery):
+  [preparation and recovery procedure](../../references/worktrees.md):
   confirm the folder was deleted (not moved or unmounted) and every
   `git worktree prune --dry-run --verbose --expire now` candidate is abandoned, prune, then
   run `prepare` again. Never prune on uncertainty.
@@ -146,7 +153,11 @@ Between waves: gate and publish (step 5), safely switch the clean worktree (step
 re-read the budget (step 2), and stop when the count reaches `max` or a stop condition
 trips.
 
-**Sync PR outcomes first.** Once per run, before the first wave and after fetching, check
+**Check the queue first.** `<pr> queue lint <config-file>`. On `ok: false`, stop and
+show the `errors`: a malformed queue makes helpers fail halfway through a run, or lets an
+entry run that should not. Relay any `warnings` and continue.
+
+**Sync PR outcomes.** Once per run, before the first wave and after fetching, check
 every `pr-open (PR #n, ...)` entry:
 
 ```bash
@@ -212,11 +223,14 @@ PR, verifies its repository/head/base, registers it in `last-run.json`, and reco
 `pr-open`. Read its `stage` on failure:
 
 - **`gate`** - the branch is not pushed and the entry is already `blocked (push gate:
-  <checks>)`. Leave the branch local for the user and continue with other repos. If
+  <checks>)`. Leave the branch local for the user and continue with other repos. A
+  `risky` check means the fix added a construct malware also uses (`eval(`,
+  `new Function(`, `createRequire`): that entry needs a human, and the run carries on. If
   `stopRun` is true, a known **malware signature** was found: stop the whole run, push
   nothing further, and tell the user to treat the machine as suspect.
 - **`pr-file`** - nothing was pushed. The PR file breaks a rule in `problems` (title
-  length, the word "draft", or a deploy step the entry names but the body drops). Fix
+  length, the word "draft", or a deploy step matching `deployPatterns` that the entry
+  names but the body drops). Fix
   `<worktreeRoot>/pr/<slug>.md` and run `publish` again.
 - **`create` / `discover` / `identity` / `register`** - the branch is pushed and the entry
   stays `pushed`. Report it; the next run's recovery pass finishes it. Never retry blindly.
@@ -227,11 +241,16 @@ because a payload added in one commit and removed in the next is still published
 
 0. **Shape.** The worktree is on the entry's fix branch, based on the freshly fetched base,
    with at least one commit and no merge commits.
-1. **Files.** No commit touches `.gitignore`, `.env*`, a lockfile, `package.json`,
-   `.github/`, `.husky/`, a shell or Windows script, a build/lint tool config
+1. **Files.** No commit touches `.gitignore`, `.env*`, a dependency manifest or lockfile
+   of any ecosystem (`package.json`, `pyproject.toml`, `requirements*.txt`, `go.mod`,
+   `Cargo.toml`, `Gemfile` and their lockfiles), package manager config (`.npmrc`,
+   `.yarnrc`), CI or hook config (`.github/`, `.husky/`, `.circleci/`, `.gitlab-ci.yml`,
+   `.pre-commit-config.yaml`), a shell or Windows script, a build file (`Makefile`,
+   `justfile`, `Taskfile`, `Dockerfile`, compose files), a build/lint tool config
    (`postcss`/`eslint`/`next`/`vite` config, `tsconfig*.json`, `wrangler.*`,
-   `.graphqlrc.*`), or makes a file executable. An entry that genuinely needs one of these
-   must be done by a human.
+   `.graphqlrc.*`), or a path matching `protectedPaths` (global or per repo), and none
+   makes a file executable. An entry that genuinely needs one of these must be done by a
+   human.
 2. **Size.** Net insertions plus deletions are within the limit: `maxDiffLines`, or the
    entry's stated size plus 50% when that is larger. Moved code counts once: a branch over
    the limit still **auto-passes** when its effective size (raw minus lines moved as contiguous
@@ -240,8 +259,11 @@ because a payload added in one commit and removed in the next is still published
    report. Only when the user explicitly asks to push a refused branch, re-run
    `publish ... <slug> --max-diff <N>`. It needs no status reset, and adds a
    `Size override:` line to the PR body.
-3. **Malware signatures.** No added line matches the built-in patterns in
-   `scripts/pr.mjs` (`MALWARE_PATTERNS`) or `blockPatterns`.
+3. **Malware signatures and risky constructs.** No added line matches a built-in
+   malware signature (`MALWARE_SIGNATURES` in `scripts/lib/gate.mjs`) or a `blockPatterns`
+   entry; a match sets `stopRun`. No added line matches a risky construct
+   (`RISKY_CONSTRUCTS` there: `eval(`, `new Function(`, `createRequire`); a match is the `risky`
+   check and blocks only that entry. `disabledPatterns` switches built-ins off by id.
 4. **Signed.** Every outgoing commit passes `git verify-commit`. SSH signing needs
    `gpg.ssh.allowedSignersFile` configured; if verification fails for that reason, tell the
    user to configure it.

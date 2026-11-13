@@ -9,7 +9,13 @@ command. Nothing persists it, so this folder ships two files:
 | `usage-snapshot.mjs` | **Required.** Reads the status line JSON on stdin, writes `~/.claude/usage/latest.json` and appends to `history.jsonl`. Prints nothing. |
 | `budget-statusline.sh` | Optional. A complete status line that renders context, cost and budget, and calls `usage-snapshot.mjs`. |
 
-Plugins cannot ship a status line - it is global user config - so installing is manual.
+Plugins cannot ship a status line - it is global user config - so it has to be installed
+separately. **The easy way is `/dev-autofix:init`**, which does everything on this page
+after showing you each change. The rest of this page is for doing it by hand, or for
+understanding what init changed.
+
+The `cp` commands below assume you are in `plugins/dev-autofix/` in a clone of this
+repository.
 
 ## Option A: keep your existing status line (recommended)
 

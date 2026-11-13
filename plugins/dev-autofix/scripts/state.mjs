@@ -28,6 +28,19 @@ const canonical = (value) => {
   }
 };
 
+// The helpers shell out to /bin/sh, ps and POSIX process groups, and use `git worktree list -z`
+// and `git show --remerge-diff` (Git 2.36) and `git merge-tree --write-tree` (Git 2.38, the
+// binding one: merge verification needs it). Older Git fails later with usage text.
+export const MIN_GIT = [2, 38];
+export function checkRuntime({ platform = process.platform, gitVersion = () => execFileSync('git', ['--version'], { encoding: 'utf8' }) } = {}) {
+  requireValue(platform !== 'win32', 'dev-autofix needs a POSIX shell and process groups; on Windows, run Claude Code or Codex inside WSL');
+  const match = /(\d+)\.(\d+)/.exec(gitVersion());
+  requireValue(match, 'Cannot read the Git version; is git on PATH?');
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  requireValue(major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1]), `Git ${major}.${minor} is too old: dev-autofix needs Git ${MIN_GIT.join('.')} or newer`);
+  return { platform, git: `${major}.${minor}` };
+}
+
 export function writeAtomic(file, value, { exclusive = false } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${randomUUID()}.tmp`;
@@ -144,6 +157,8 @@ export function releaseLock(directory, token) {
   fs.rmdirSync(directory);
 }
 
+const patternList = value => Array.isArray(value) && value.every(source => { try { return nonempty(source) && Boolean(new RegExp(source)); } catch { return false; } });
+
 export function validateConfig(config) {
   requireValue(config?.version === 1 && Array.isArray(config.repos) && config.repos.length > 0, 'Invalid autofix config');
   const names = new Set();
@@ -155,7 +170,13 @@ export function validateConfig(config) {
     requireValue(nonempty(repo.baseBranch), `${repo.name}: baseBranch is required`);
     requireValue(Array.isArray(repo.verify) && repo.verify.length > 0 && repo.verify.every(nonempty), `${repo.name}: configure nonempty verify commands before proceeding`);
     requireValue(repo.commandTimeoutSeconds === undefined || (Number.isSafeInteger(repo.commandTimeoutSeconds) && repo.commandTimeoutSeconds >= 1 && repo.commandTimeoutSeconds <= 3600), `${repo.name}: commandTimeoutSeconds must be an integer from 1 to 3600`);
+    // "." (or "a/..") is the worktree itself, which always exists, so install would never run.
+    requireValue(repo.installMarker === undefined || repo.installMarker === '' || (typeof repo.installMarker === 'string' && !path.isAbsolute(repo.installMarker) && !repo.installMarker.split(/[\\/]/).includes('..') && path.resolve('/worktree', repo.installMarker) !== '/worktree'), `${repo.name}: installMarker must be a path inside the worktree, or ""`);
+    requireValue(repo.protectedPaths === undefined || patternList(repo.protectedPaths), `${repo.name}: protectedPaths must be a list of regular expressions`);
+    requireValue(repo.env === undefined || (Array.isArray(repo.env) && repo.env.every(name => typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))), `${repo.name}: env must be a list of variable names (never values)`);
   }
+  for (const key of ['blockPatterns', 'protectedPaths', 'deployPatterns']) requireValue(config[key] === undefined || patternList(config[key]), `${key} must be a list of regular expressions`);
+  requireValue(config.disabledPatterns === undefined || (Array.isArray(config.disabledPatterns) && config.disabledPatterns.every(nonempty)), 'disabledPatterns must be a list of built-in pattern ids');
   const worktreeRoot = config.worktreeRoot ?? '~/.claude/autofix/worktrees';
   requireValue(nonempty(worktreeRoot), 'worktreeRoot must be a path');
   const root = canonical(expand(worktreeRoot));
@@ -224,6 +245,32 @@ export function manualApprovalHead({ remote, headRef, headSha, comment, history 
   return approved;
 }
 
+/**
+ * An approval is an exact token on its own, or a token followed by the commit it reviewed:
+ *
+ *   LGTM
+ *   Reviewed head: <40-hex sha>
+ *   Checks: <free text>            (optional)
+ *
+ * Any other text makes the comment feedback, never an approval. Returns null for feedback.
+ */
+// KEY-DECISION 2026-11-11: the two-line form states its own commit, so an approval posted by
+// review no longer depends on a local record or on reconstructing GitHub's push history.
+export function parseApproval(body, approveTokens = ['LGTM', '/merge']) {
+  if (!nonempty(body)) return null;
+  const lines = body.trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const token = approveTokens.find(item => item.toLowerCase() === lines[0].toLowerCase());
+  if (!token) return null;
+  if (lines.length === 1) return { token, reviewedHead: null };
+  let reviewedHead = null;
+  for (const line of lines.slice(1)) {
+    const head = /^Reviewed head: ([a-f0-9]{40})$/i.exec(line);
+    if (head && !reviewedHead) reviewedHead = head[1].toLowerCase();
+    else if (!/^Checks: \S/i.test(line)) return null;
+  }
+  return reviewedHead ? { token, reviewedHead } : null;
+}
+
 // KEY-DECISION 2026-09-26: a token approves its recorded commit, never the head observed later by finish.
 export function checkApproval({ remote, number, headRef, headSha, pending, reviewers, approveTokens = ['LGTM', '/merge'], record, history }) {
   requireValue(shaOK(headSha), 'Invalid current head');
@@ -231,13 +278,19 @@ export function checkApproval({ remote, number, headRef, headSha, pending, revie
   const comment = pending[0];
   requireValue(['issue', 'review'].includes(comment.kind), 'Inline comments cannot approve');
   requireValue(Array.isArray(reviewers) && reviewers.some(login => login.toLowerCase() === comment.author?.toLowerCase()), 'Author is not a configured reviewer');
-  requireValue(nonempty(comment.body) && approveTokens.some(token => token.toLowerCase() === comment.body.trim().toLowerCase()), 'Not an exact approval token');
+  const approval = parseApproval(comment.body, approveTokens);
+  requireValue(approval, 'Not an exact approval token');
+  requireValue(!approval.reviewedHead || approval.reviewedHead === headSha, 'Approval names a different head; re-review required');
   if (comment.kind === 'review') {
     requireValue(['APPROVED', 'COMMENTED'].includes(comment.state?.toUpperCase()) && comment.commitSha === headSha, 'Formal review is dismissed, incompatible, or for a different head');
     requireValue(comment.url?.startsWith(`https://github.com/${remote}/pull/${number}#pullrequestreview-`), 'Review belongs to another PR');
   } else if (record) {
     validateApprovalRecord(record);
     requireValue(record.remote === remote && record.number === number && record.headSha === headSha && record.commentUrl === comment.url && record.author.toLowerCase() === comment.author.toLowerCase() && record.body === comment.body, 'Missing or stale approval record; re-review the current head');
+  } else if (approval.reviewedHead) {
+    // Anyone with write access can edit a comment, so an edited one no longer proves what the reviewer wrote.
+    requireValue(nonempty(comment.createdAt) && comment.updatedAt === comment.createdAt, 'Edited approval needs fresh review');
+    validateApprovalRecord({ remote, number, headSha: approval.reviewedHead, commentUrl: comment.url, author: comment.author, body: comment.body });
   } else {
     const bound = manualApprovalHead({ remote, headRef, headSha, comment, history });
     validateApprovalRecord({ remote, number, headSha: bound, commentUrl: comment.url, author: comment.author, body: comment.body });
@@ -250,7 +303,7 @@ const gitRead = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encod
 
 const sshHost = host => execFileSync('ssh', ['-G', host], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).match(/^hostname\s+(\S+)$/m)?.[1];
 export function githubRemote(value, resolveSSH = sshHost) {
-  let host, pathname, ssh = false;
+  let host, pathname, ssh;
   if (value.includes('://')) {
     const url = new URL(value);
     requireValue(['https:', 'http:', 'ssh:', 'git:'].includes(url.protocol) && !url.search && !url.hash, 'Unsupported origin URL');
@@ -354,7 +407,7 @@ export function listRecovery(config) {
 
 function main([command, ...args]) {
   switch (command) {
-    case 'config': validateConfig(read(args[0])); return 'Config checks passed';
+    case 'config': checkRuntime(); validateConfig(read(args[0])); return 'Config checks passed';
     case 'lock': requireValue(args[1], 'lock requires an identity JSON file'); return acquireLock(args[0], read(args[1]));
     case 'inspect-lock': return inspectLock(args[0]);
     case 'resume-lock': return resumeLock(args[0], read(args[1]));

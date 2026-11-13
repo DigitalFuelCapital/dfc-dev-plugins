@@ -1,6 +1,6 @@
 ---
 name: finish
-description: Act on reviews of autofix PRs. Address findings with an Opus worker, or merge an unchanged head with a commit-bound approval. Test clean base integration locally without changing the approved PR head. Preserve unfinished worktrees and clean up only verified completed work. Invoke manually after reviewing.
+description: Act on reviews of autofix PRs. Address findings with a worker, or merge an unchanged head with a commit-bound approval. Test clean base integration locally without changing the approved PR head. Preserve unfinished worktrees and clean up only verified completed work. Invoke manually after reviewing.
 disable-model-invocation: true
 argument-hint: "[repo ...] [pr=N ...] [dry-run]"
 ---
@@ -11,7 +11,7 @@ argument-hint: "[repo ...] [pr=N ...] [dry-run]"
 `/dev-autofix:review` (`$review` in Codex) to review the full batch and leave comments.
 This skill reads those comments and closes the loop:
 
-- **Concerns** - an Opus worker addresses them in the worktree `/dev-autofix:run` already
+- **Concerns** - a worker on `finishModel` (Opus by default) addresses them in the worktree `/dev-autofix:run` already
   made, the lead gates and pushes the result, then posts a follow-up comment listing what
   was done per concern.
   You review again and re-invoke.
@@ -45,12 +45,15 @@ Resolve `autofix.config.json` and apply overrides exactly as `/dev-autofix:run` 
 Stop and tell the user to run `/dev-autofix:init` if it is missing. Resolve `reviewers`:
 if unset, it is the single login from `gh api user --jq .login`.
 
-Read [shared workflow state](../../references/workflow-state.md). Run its config check,
-acquire the repo lock before any worktree activity, and use its approval checker. Release
+Read these references before acting: [config check and locks](../../references/locks.md),
+[worktrees](../../references/worktrees.md), [approvals](../../references/approvals.md) and
+[merge verification](../../references/merge-verification.md). (The
+[index](../../references/workflow-state.md) lists every helper and file.) Run the config
+check, acquire the repo lock before any worktree activity, and use the approval checker. Release
 owned locks in a finally step after workers stop. Never continue a dependent action when
 a helper fails. With `dry-run`, classify without acquiring locks or writing records.
 
-Print the budget line from `/dev-autofix:run` step 2. Review is human-initiated work, not
+Print the budget line from `/dev-autofix:run` step 2. Finish is human-initiated work, not
 leftover-budget work, so it does **not** gate on `reservePercent`. It does stop if
 `pct5 >= fiveHourCeiling`, and it says so if the snapshot is stale or unavailable but
 carries on. Assess freshness using `observed5`/`observed7` and future reset times;
@@ -58,6 +61,7 @@ a stale five-hour reading must not be treated as a current ceiling breach.
 
 ## 2. Find PRs with a pending review
 
+`<plugin>` is this plugin's root, two directories above this skill's base directory, and
 `<pr>` below is `node <plugin>/scripts/pr.mjs`. Every helper prints JSON and exits nonzero
 on a refusal; never continue a dependent step after one.
 
@@ -93,8 +97,10 @@ only as context, labelled as such.
 with this line in a comment posted under your login:
 
 ```
-<!-- dev-autofix:review addressed=<comma-separated ids> -->
+<!-- dev-autofix:finish addressed=<comma-separated ids> -->
 ```
+
+Follow-ups posted before version 4.0 say `dev-autofix:review`; the helper accepts both.
 
 ## 3. Classify
 
@@ -104,15 +110,21 @@ The helper's `classification` is final; there is no judgement here:
 |---|---|---|
 | `skipped` | closed, merged, wrong base or foreign branch | report `reason`, continue |
 | `awaiting review` | nothing pending | report, continue |
-| `address` | anything other than one lone approve token | steps 4-8 |
-| `approve` | one exact token, bound to the current head | step 9 (`land`) |
-| `stale` | the token approved an earlier head | post `Re-review required` with a marker consuming the token's id, continue |
-| `evidence-unavailable` | the approval can't be bound (edited comment, missing history) | leave it pending, report `reason` in chat without a marker, continue |
+| `address` | at least one pending entry is not an approval | steps 4-8 |
+| `approve` | every pending entry is an approval, and the newest is bound to the current head | step 9 (`land`) |
+| `stale` | the newest approval was for an earlier head | post `Re-review required` with a marker consuming every pending id, continue |
+| `evidence-unavailable` | the newest approval can't be bound (edited comment, missing history) | leave it pending, report `reason` in chat without a marker, continue |
+
+An approval is an exact token (`LGTM`), alone or followed by a `Reviewed head: <sha>` line
+(and optionally a `Checks:` line). When several approvals are pending, the newest decides
+and the helper lists the older ones in `superseded`; report them.
 
 `evidence` names what bound an approval: `record` (the immutable record
-`/dev-autofix:review` wrote), `review` (a formal review's commit) or `push-history` (the
-fallback for a manual comment). The helper always prefers the record. Report the evidence
-source per PR. Do not sync or spawn a worker merely to resolve missing approval evidence.
+`/dev-autofix:review` wrote), `comment` (the comment states its own `Reviewed head`),
+`review` (a formal review's commit) or `push-history` (the fallback for a bare token typed
+by hand). The helper always prefers the record. Report the evidence source per PR. To
+clear an `evidence-unavailable` approval, the reviewer posts a new one (for example by
+running `/dev-autofix:review` again); it supersedes the old one. Do not sync or spawn a worker merely to resolve missing approval evidence.
 
 With `dry-run`, print per PR: repo, number, classification, evidence, and the pending
 entries (author, time, path:line for inline, body). Then stop.
@@ -144,7 +156,8 @@ the lockfile digest changed.
 Use this step for the address path, or when step 9 finds a conflict that requires a
 published resolution. Approval with a clean local integration goes directly to step 9.
 Before syncing or launching a worker (not for merge-only approvals or `dry-run`), run
-`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`; on failure, report it,
+`node <plugin>/scripts/preflight.mjs <config-file> <repo.name>`
+([delivery preflight](../../references/publishing.md#delivery-preflight)); on failure, report it,
 skip this repo's source work and continue with other PRs. Record the pre-sync HEAD. Any sync published to the PR branch changes its approved head
 and requires another review; a local verification merge never gets pushed.
 
@@ -160,13 +173,15 @@ git merge-base --is-ancestor origin/<baseBranch> HEAD || git merge --no-edit -S 
   shared quarantine procedure, and report which files need human resolution. Leave the
   queue entry `pr-open` and continue to the next PR on a fresh managed tree.
 
-Signing follows the `/dev-autofix:run` rules: never `--no-gpg-sign`; if the agent socket
+Signing follows the rules in the [fix brief](../../references/fix-brief.md): never
+`--no-gpg-sign`; if the agent socket
 is unreachable under a sandbox, retry that one command with the sandbox disabled.
 
-## 6. Address - the Opus worker
+## 6. Address - the finish worker
 
-Spawn one `general-purpose` subagent with `model: "opus"` per PR, one at a time, in PR
-order. Brief:
+Spawn one `general-purpose` subagent per PR, one at a time, in PR order, on the model
+named by `finishModel` in the config (default `opus`; addressing review comments needs
+more judgement than executing a plan). Brief:
 
 > Address a reviewer's comments on {repo.remote} PR #{n} ("{title}") in the worktree at
 > {wt}. Use it as the working directory for every command; never touch {repo.path}. It is
@@ -190,11 +205,13 @@ order. Brief:
 > is already satisfied, say so with evidence instead of changing code. Keep changes
 > scoped to what the comments ask for.
 >
-> Hard rules: {the full hard-rules paragraph from /dev-autofix:run step 4, plus
-> config.forbidden and repo.forbidden}. If a comment needs a file the push gate refuses
-> (`.gitignore`, `.env*`, lockfiles, `package.json`, `.github/`, `.husky/`, scripts,
-> build/lint tool config), or touches anything security-related, do not attempt it -
-> report it as "needs human".
+> Hard rules: {the full "Hard rules." paragraph from `<plugin>/references/fix-brief.md`,
+> plus config.forbidden and repo.forbidden}. If a comment needs a file the push gate refuses
+> (`.gitignore`, `.env*`, a dependency manifest or lockfile, package manager config, CI or
+> hook config, scripts, build files, build/lint tool config, or a path matching
+> {config.protectedPaths and repo.protectedPaths}), needs `eval(`, `new Function(` or
+> `createRequire`, or touches anything security-related, do not attempt it - report it as
+> "needs human".
 >
 > Run every command in {verify}{, and `{testCommand}` for the tests covering the files you
 > touched}. All must pass. If any fails, even if you believe the failure is pre-existing,
@@ -235,9 +252,10 @@ PR past that means the PR should be split, which is a human's call.
 On failure: do not push. Post a follow-up comment naming the failed checks. Preserve the
 commits under a new, uniquely named `autofix-review/pr<n>-refused-<unique-id>` branch;
 never force-update a ref. Once workers stop, quarantine any unfinished attempt with the
-shared helper and prepare a fresh managed tree for the next PR. If `malware` is true, stop
-the whole run, leave the worktree untouched, and tell the user to treat the machine as
-suspect.
+shared helper and prepare a fresh managed tree for the next PR. A `risky` failure (a
+construct such as `eval(` that a human must add) is an ordinary refusal. If `malware` is
+true, a known malware signature was found: stop the whole run, leave the worktree
+untouched, and tell the user to treat the machine as suspect.
 
 On success: `git push origin HEAD:refs/heads/<head>`. A plain push is fast-forward only,
 so if someone pushed to the branch meanwhile it is rejected. Report that and skip the PR.
@@ -260,7 +278,7 @@ Write the body to `<worktreeRoot>/review/scratch/<repo.name>-pr<n>.comment.md` a
 Verified: <commands run>
 Needs you: <list, or "nothing">
 
-<!-- dev-autofix:review addressed=<ids of every pending entry> -->
+<!-- dev-autofix:finish addressed=<ids of every pending entry> -->
 ```
 
 Blocked outcomes (conflict needs human, verify failed, gate refused, push rejected) use
@@ -304,7 +322,7 @@ Act on its `stage` when `ok` is false:
 | `verify` | report `error`, preserve unfinished work, leave approval pending, continue |
 | `ci` | a check failed: approval stays pending; report it, no marker |
 | `check` | mergeability or verification could not be confirmed: approval stays pending; report `error` |
-| `stale` | post `Re-review required` with a marker consuming the token's id |
+| `stale` | post `Re-review required` with a marker consuming every pending id |
 | `evidence-unavailable` | leave pending and report `reason` in chat, without a marker |
 | `queued` | the merge was accepted but not confirmed: report `merge queued`; the entry stays `pr-open` |
 
