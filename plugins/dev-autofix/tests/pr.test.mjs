@@ -342,6 +342,8 @@ test('publish leaves the entry pushed when registration fails, and blocks it whe
 
 function approvalRuntime({ head = 'a'.repeat(40), issues = [], reviews = [], inline = [], activities = [] } = {}) {
   const runtime = createRuntime();
+  // Never ask the real gh who is logged in: CI has no gh login.
+  runtime.login = () => 'finisher';
   runtime.readPR = () => ({ number: 7, state: 'OPEN', isDraft: true, isCrossRepository: false, headRefName: 'fix/auto-20260927-alpha', headRefOid: head, baseRefName: 'staging', url: 'https://github.com/owner/repo/pull/7' });
   runtime.ghPages = api => {
     if (api.endsWith('/issues/7/comments')) return issues;
