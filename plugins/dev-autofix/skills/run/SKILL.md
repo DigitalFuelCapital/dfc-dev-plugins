@@ -53,45 +53,31 @@ checkout gets picked up by that checkout's typecheck, lint and test globs.
 
 ## 2. Read the budget
 
-The snapshot writer merges every session's status line refresh into one snapshot. Usage
-only rises within a window, so the merged `pct5`/`pct7` never drop because an idle session
-replayed an old reading. `observed5` and `observed7` are the observation times for their respective windows.
-`observed_at` is their conservative minimum, or null until both have been observed.
-`ts` is only the last write; **never judge freshness by `ts`**.
+The budget gate is a helper; never judge the snapshot's timestamps or percentages yourself:
 
 ```bash
-jq '{pct5, reset5, observed5, pct7, reset7, observed7}' <usageSnapshotPath>
+node <plugin>/scripts/pr.mjs budget <config-file> [--reserve <N>]
 ```
 
-First check the writer itself: if `~/.claude/usage-snapshot.mjs` is missing, or its
-`shasum -a 256` differs from this plugin's `statusline/usage-snapshot.mjs` (two
-directories up from this skill's base directory), stop and tell the user to run
-`/dev-autofix:init`. A plugin update does not refresh the copied writer, and an old writer
-emits a snapshot shape these steps misread.
+Pass `--reserve <N>` when the user gave `reserve=N`.
 
-**Budget unavailable.** The writer is installed but `latest.json` is missing, or either
-`pct5` or `pct7` is null. That means the plan does not expose rate limits (API-key
-billing, some enterprise setups), or this session has not had its first API response yet.
-Full budget gating is impossible: proceed only if the user passed an explicit `max=N` and
-confirms. After confirmation, skip the checks below for each missing window for the whole
-run, but keep enforcing any window that is present - `max` covers only what is missing.
-Without `max=N`, stop and explain both paths.
+It checks the copied snapshot writer, then judges each window by its own observation time
+(fresh, not in the future, window not reset) against `reservePercent`,
+`fiveHourCeiling` and `maxSnapshotAgeSeconds`. Act on `state`:
 
-Otherwise stop immediately, and say which condition tripped, if:
+- `ok` - go on. `headroomPercent` sizes the wave (below).
+- `writer-outdated` - stop and tell the user to run `/dev-autofix:init`.
+- `stale`, `reserve-reached`, `five-hour-ceiling` - stop and give `reason`. For the
+  ceiling, also say when the 5h window resets (`fiveHour.resetsInSeconds`) so the user can
+  re-invoke.
+- `unavailable` - the plan does not expose rate limits (API-key billing, some enterprise
+  setups) or this session has had no API response yet. Without `max=N`, stop and explain
+  both paths. With `max=N`, ask the user to confirm; after that, call the helper with
+  `--bounded` for the whole run. It skips only the windows that are missing and keeps
+  enforcing any that are present.
 
-- For each available window, its `observed5` or `observed7` is null, in the future, or
-  older than `maxSnapshotAgeSeconds`. Do not substitute `observed_at` for missing
-  per-window fields in an old snapshot. A new API observation is needed; refreshing
-  an idle status line only changes `ts`. A partial update cannot renew the other window.
-  These checks also apply to the available windows in bounded `max=N` mode.
-- `reset5` or `reset7` is in the past - that window has reset since the last observation,
-  so its number is meaningless. Treat as stale.
-- `pct7 >= 100 - reserve`
-- `pct5 >= fiveHourCeiling` - tell the user when the 5h window resets so they can
-  re-invoke
-
-Re-run this check before every wave and after every fix, and print the line each time so
-the user can follow the burn.
+Re-run it before every wave and after every fix, and print a one-line budget (both
+percentages and `state`) each time so the user can follow the burn.
 
 **Size each wave to the headroom.** Workers in a wave run in parallel and the budget is
 only re-read between waves. A fix's cost is not bounded in advance - a single worker can
@@ -99,15 +85,14 @@ use more than any estimate - so this sizing limits the risk of crossing the rese
 does not guarantee against it. The reserve itself is the buffer.
 
 ```
-headroom   = min((100 - reserve) - pct7, fiveHourCeiling - pct5)
-waveSize   = min(repos with a candidate, max - landed, floor(headroom / (2 * perFix)))
+waveSize   = min(repos with a candidate, max - landed, floor(headroomPercent / (2 * perFix)))
 ```
 
-`perFix` starts at `perFixPercentEstimate` and becomes the largest per-worker `pct7` or
-`pct5` delta observed so far this run; the factor of 2 is a safety margin for a fix that
-costs more than any seen so far. If `waveSize` is 0, stop: the next fix could cross the
-reserve. When the budget is unavailable (above), `waveSize` is just
-`min(repos with a candidate, max - landed)`.
+`perFix` starts at `perFixPercentEstimate` and becomes the largest per-worker change in
+either window's `usedPercent` observed so far this run; the factor of 2 is a safety margin
+for a fix that costs more than any seen so far. If `waveSize` is 0, stop: the next fix
+could cross the reserve. When `headroomPercent` is null (bounded mode with no window
+reported), `waveSize` is just `min(repos with a candidate, max - landed)`.
 
 ## 3. Prepare worktrees
 

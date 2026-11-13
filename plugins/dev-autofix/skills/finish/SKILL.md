@@ -53,11 +53,11 @@ check, acquire the repo lock before any worktree activity, and use the approval 
 owned locks in a finally step after workers stop. Never continue a dependent action when
 a helper fails. With `dry-run`, classify without acquiring locks or writing records.
 
-Print the budget line from `/dev-autofix:run` step 2. Finish is human-initiated work, not
-leftover-budget work, so it does **not** gate on `reservePercent`. It does stop if
-`pct5 >= fiveHourCeiling`, and it says so if the snapshot is stale or unavailable but
-carries on. Assess freshness using `observed5`/`observed7` and future reset times;
-a stale five-hour reading must not be treated as a current ceiling breach.
+Read the budget with `node <plugin>/scripts/pr.mjs budget <config-file>` (`<plugin>` as in
+step 2) and print both percentages. Finish is human-initiated work, not leftover-budget
+work, so it does **not** gate on the reserve. It stops only if `fiveHour.atCeiling` is
+true (set only by a fresh reading), saying when the window resets. Any other non-`ok`
+state is reported and finish carries on.
 
 ## 2. Find PRs with a pending review
 

@@ -5,6 +5,7 @@
 //   publish.mjs   worker briefs and publication
 //   approval.mjs  review timeline and approval evidence
 //   land.mjs      prepare, land, cleanup, remove-worktree
+//   budget.mjs    the budget gate run, plan, finish and status share
 // Everything is re-exported here, so callers and tests import from pr.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +17,7 @@ import { gate } from './lib/gate.mjs';
 import { publish, renderBrief } from './lib/publish.mjs';
 import { buildApprovalInput } from './lib/approval.mjs';
 import { cleanup, land, prepare, removeWorktree } from './lib/land.mjs';
+import { readBudget } from './lib/budget.mjs';
 
 export * from './lib/common.mjs';
 export * from './lib/queue.mjs';
@@ -23,8 +25,10 @@ export * from './lib/gate.mjs';
 export * from './lib/publish.mjs';
 export * from './lib/approval.mjs';
 export * from './lib/land.mjs';
+export * from './lib/budget.mjs';
 
 const USAGE = `Usage:
+  pr.mjs budget <config> [--bounded] [--reserve <percent>]
   pr.mjs queue init <config>
   pr.mjs queue lint <config>
   pr.mjs queue next <config> <repo>
@@ -43,6 +47,19 @@ const USAGE = `Usage:
 
 export async function main(argv, runtime = createRuntime()) {
   const [command, ...args] = argv;
+  if (command === 'budget') {
+    const [configFile, ...flags] = args;
+    let bounded = false, reserve;
+    for (let i = 0; i < flags.length; i++) {
+      if (flags[i] === '--bounded') bounded = true;
+      else if (flags[i] === '--reserve' && /^(?:100|\d{1,2})$/.test(flags[i + 1] ?? '')) reserve = Number(flags[++i]);
+      else throw new Error(USAGE);
+    }
+    requireValue(configFile, USAGE);
+    // run's reserve=N argument overrides the config for that run only.
+    const config = validateConfig(read(configFile));
+    return readBudget(reserve === undefined ? config : { ...config, reservePercent: reserve }, { bounded });
+  }
   if (command === 'queue') {
     const [action, configFile, ...rest] = args;
     const config = validateConfig(read(configFile)), file = queueFile(configFile, config);

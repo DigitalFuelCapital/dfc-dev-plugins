@@ -7,6 +7,18 @@ After any update, run `/dev-autofix:init` in Claude Code to refresh the copied b
 snapshot writer, and reinstall the plugin in Codex (see the
 [root README](../../README.md#update)).
 
+## 4.1.0
+
+- **Budget gate in a helper.** New `pr.mjs budget <config> [--bounded] [--reserve N]`
+  decides the budget: it checks the copied snapshot writer, then judges each window by its
+  own observation time against the reserve, five-hour ceiling and maximum age. `run`,
+  `plan` and `finish` call it instead of applying the rules by hand, and `status` reports
+  the same result. The rules themselves are unchanged.
+- New `writer-outdated` budget state when `~/.claude/usage-snapshot.mjs` is missing or
+  differs from the plugin's copy (run `/dev-autofix:init`).
+- `--bounded` is run's confirmed `max=N` mode: a window the plan does not report is
+  skipped while a reported one is still enforced.
+
 ## 4.0.0
 
 **Breaking: repo commands no longer see your shell's environment.** Install, prepare and
