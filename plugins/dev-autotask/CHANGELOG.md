@@ -26,6 +26,8 @@ After any update, reinstall the plugin in Codex as well (see the
   reference). `list` shows done, worktree and lock.
   With `--merged <sha>` (finish passes the merged head) it also deletes the remote task
   branch, only while the branch still points at that commit.
+- `finish` checks that the task worktree holds only the PR's commits before addressing
+  feedback, and stops if it has local commits or changes that are not on the PR.
 - `status` looks a task up by the row's repository and suggests `<repo>:<id>` commands,
   so a task ID used in two repositories cannot be confused.
 - **Review helper.** New `scripts/review.mjs` decides the latest review (configured
