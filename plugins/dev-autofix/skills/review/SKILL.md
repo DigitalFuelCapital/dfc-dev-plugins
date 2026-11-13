@@ -127,7 +127,9 @@ checks needing production secrets.
 
 Acquire `<worktreeRoot>/.locks/repo-<repo.name>` with the shared helper, write
 `{number,headSha,baseSha}` from the reviewed snapshot to a file under `review/scratch/`,
-then run:
+then run it. `baseSha` is the remote base tip from `git -C <repo.path> ls-remote origin
+refs/heads/<baseBranch>`, not the PR's `baseRefOid`: GitHub updates that lazily, so it
+can trail a base that moved.
 
 ```bash
 node <plugin>/scripts/review.mjs verify <config-file> <repo.name> <repoToken> <input-file>
@@ -136,8 +138,10 @@ node <plugin>/scripts/review.mjs verify <config-file> <repo.name> <repoToken> <i
 It runs install plus the full prepare/verify suite, so give it a long command timeout (or
 none). It checks worktree, origin and PR identity, detaches at the exact head, runs the
 commands with deadlines, and restores the original checkout. Only `status: passed`
-counts as local evidence; keep its receipt path in this PR's record. If the lock is busy,
-the helper fails, or restoration fails (the receipt says so; never discard its
+counts as local evidence; keep its receipt path in this PR's record. If the helper
+stops with `Remote base changed`, the base moved: re-read the tip, re-check the diff
+against it, and retry once; that alone does not stop local use. If the lock is busy,
+the helper fails otherwise, or restoration fails (the receipt says so; never discard its
 artifacts), review remotely and stop local use for that repo. Release the lock in a
 finally step. Save any extra reproductions under `review/scratch/`, labelled separately.
 
